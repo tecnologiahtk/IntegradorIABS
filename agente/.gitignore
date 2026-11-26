@@ -1,0 +1,7 @@
+bin/
+obj/
+publicar/
+.teste/
+ferramentas/api-simulada/recebidos/
+*.user
+.vs/

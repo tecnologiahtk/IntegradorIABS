@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>IabsAgenteSenior</AssemblyName>
+    <RootNamespace>IabsAgenteSenior</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- Publicado em pasta, com o runtime junto (sem instalar .NET no cliente),
+         sem extração para a pasta temporária, sem trimming nem ofuscação
+         (antivírus e EDR avaliam melhor binário comum). -->
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishAot>false</PublishAot>
+    <AssemblyTitle>Integrador IABS</AssemblyTitle>
+    <Description>Integrador IABS: ponte entre a IABS e o banco do Senior do cliente, só com conexão de saída e operações fixas.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.8" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.15" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="IabsAgenteSenior.Testes" />
+  </ItemGroup>
+
+</Project>

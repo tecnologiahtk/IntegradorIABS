@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>IabsAgenteSenior.Monitor</AssemblyName>
+    <RootNamespace>IabsAgenteSenior.Monitor</RootNamespace>
+    <AssemblyTitle>Integrador IABS (status)</AssemblyTitle>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- mesma pasta e mesmo runtime do agente; roda sem administrador (asInvoker) -->
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationVisualStyles>true</ApplicationVisualStyles>
+    <ApplicationDefaultFont>Segoe UI, 9pt</ApplicationDefaultFont>
+    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\IabsAgenteSenior\IabsAgenteSenior.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="IabsAgenteSenior.Testes" />
+  </ItemGroup>
+
+</Project>

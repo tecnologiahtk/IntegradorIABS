@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>IabsAgenteSenior.Configurador</AssemblyName>
+    <RootNamespace>IabsAgenteSenior.Configurador</RootNamespace>
+    <AssemblyTitle>Configurar Integrador IABS</AssemblyTitle>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- publicado na mesma pasta do agente, com o mesmo runtime; sem extração nem ofuscação -->
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <!-- pede administrador ao abrir: grava em C:\ProgramData e protege a pasta -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationVisualStyles>true</ApplicationVisualStyles>
+    <ApplicationDefaultFont>Segoe UI, 9.75pt</ApplicationDefaultFont>
+    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\IabsAgenteSenior\IabsAgenteSenior.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/IabsAgenteSenior/IabsAgenteSenior.csproj" />
+    <Project Path="src/IabsAgenteSenior.Configurador/IabsAgenteSenior.Configurador.csproj" />
+    <Project Path="src/IabsAgenteSenior.Monitor/IabsAgenteSenior.Monitor.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/IabsAgenteSenior.Testes/IabsAgenteSenior.Testes.csproj" />
+  </Folder>
+</Solution>

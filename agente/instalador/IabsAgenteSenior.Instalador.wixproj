@@ -1,0 +1,20 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+
+  <!-- WiX 5 (licença MS-RL, sem taxa). Gere a pasta publicar\app antes:
+       dotnet publish ..\src\IabsAgenteSenior -c Release -o ..\publicar\app -->
+  <PropertyGroup>
+    <!-- manter igual ao <Version> do Directory.Build.props -->
+    <Versao Condition="'$(Versao)' == ''">2.0.1</Versao>
+    <OutputName>IntegradorIABS-$(Versao)</OutputName>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <Publicar>$(MSBuildProjectDirectory)\..\publicar\app</Publicar>
+    <DefineConstants>Versao=$(Versao);Publicar=$(Publicar)</DefineConstants>
+    <OutputPath>$(MSBuildProjectDirectory)\..\publicar\msi\</OutputPath>
+    <SuppressIces>ICE61</SuppressIces>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
+  </ItemGroup>
+
+</Project>

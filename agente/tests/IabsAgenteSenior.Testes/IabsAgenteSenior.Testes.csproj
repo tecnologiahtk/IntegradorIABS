@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- o agente é publicado com o runtime junto; o projeto de testes não precisa ser -->
+    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.2" />
+    <PackageReference Include="xunit.v3" Version="3.2.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Kestrel faz o papel da IABS nos testes do canal (WebSocket local) -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\IabsAgenteSenior\IabsAgenteSenior.csproj" />
+    <ProjectReference Include="..\..\src\IabsAgenteSenior.Configurador\IabsAgenteSenior.Configurador.csproj" />
+    <ProjectReference Include="..\..\src\IabsAgenteSenior.Monitor\IabsAgenteSenior.Monitor.csproj" />
+  </ItemGroup>
+
+</Project>

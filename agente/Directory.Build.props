@@ -1,0 +1,15 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Version>2.0.1</Version>
+    <Company>IABS</Company>
+    <Product>Integrador IABS</Product>
+    <Copyright>IABS</Copyright>
+    <Deterministic>true</Deterministic>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <SatelliteResourceLanguages>pt-BR;en</SatelliteResourceLanguages>
+  </PropertyGroup>
+</Project>
