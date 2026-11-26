@@ -130,6 +130,34 @@ public sealed class AtualizadorTestes : IDisposable
         Assert.Empty(github.Pedidos);
     }
 
+    /// <summary>A API "latest" falsa do GitHub, para o "Verificar atualização" da janela.</summary>
+    private sealed class UltimaFalsa(string tag, string? url) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct)
+        {
+            Assert.Equal($"https://api.github.com/repos/{Constantes.RepositorioOficial}/releases/latest", r.RequestUri!.ToString());
+            var corpo = JsonSerializer.Serialize(new
+            {
+                tag_name = tag,
+                assets = new[] { new { name = "IntegradorIABS.msi", digest = $"sha256:{ShaCerto}", browser_download_url = url } },
+            });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(corpo) });
+        }
+    }
+
+    [Fact]
+    public async Task Verificar_atualizacao_le_a_ultima_versao_publicada()
+    {
+        var v = await VerificadorAtualizacao.UltimaVersaoAsync(new ConfiguracaoProxy(), TestContext.Current.CancellationToken,
+            new UltimaFalsa("v9.9.9", RegrasAtualizacao.UrlDoInstalador("9.9.9").ToString()));
+        Assert.Equal(new VersaoPublicada("9.9.9", ShaCerto), v);
+        // instalador fora do lugar oficial ou versão sem formato: não oferece
+        Assert.Null(await VerificadorAtualizacao.UltimaVersaoAsync(new ConfiguracaoProxy(), TestContext.Current.CancellationToken,
+            new UltimaFalsa("v9.9.9", "https://example.com/IntegradorIABS.msi")));
+        Assert.Null(await VerificadorAtualizacao.UltimaVersaoAsync(new ConfiguracaoProxy(), TestContext.Current.CancellationToken,
+            new UltimaFalsa("ultima", RegrasAtualizacao.UrlDoInstalador("9.9.9").ToString())));
+    }
+
     [Fact]
     public void Sem_pedido_nao_faz_nada() =>
         Assert.Equal("SEM_PEDIDO", new Atualizador(_caminhos, NullLogger.Instance).ExecutarAsync(TestContext.Current.CancellationToken).GetAwaiter().GetResult().Situacao);

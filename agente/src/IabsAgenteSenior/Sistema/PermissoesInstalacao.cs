@@ -78,7 +78,9 @@ public static class PermissoesInstalacao
             try
             {
                 LiberarServico(Constantes.NomeServico, sid);
-                mensagens.Add($"Serviço: {sid} pode consultar, iniciar e parar.");
+                // o "Atualizar agora" da janela liga o atualizador (2.1.0)
+                LiberarServico(Constantes.NomeServicoAtualizador, sid);
+                mensagens.Add($"Serviço e atualizador: {sid} pode consultar, iniciar e parar.");
             }
             catch (Win32Exception ex)
             {

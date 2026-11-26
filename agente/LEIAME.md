@@ -92,7 +92,9 @@ Desde a 2.1.0, a IABS atualiza o integrador: na tela de Integrações aparece "v
 3. baixa o instalador (só HTTPS, só GitHub) e confere o SHA-256 do arquivo;
 4. roda `msiexec /i ... /qn` e se desliga. O instalador para o integrador, troca os arquivos e liga de novo; a configuração fica.
 
-Se qualquer conferência falhar, nada é instalado, e o motivo aparece na tela da IABS (`atualizacao.json` na pasta de dados). À mão, também vale rodar o `IntegradorIABS.msi` novo por cima.
+Se qualquer conferência falhar, nada é instalado, e o motivo aparece na tela da IABS e na janela (`atualizacao.json` na pasta de dados).
+
+A TI também pode atualizar pela janela: aba **3. Situação** → **Verificar atualização** (consulta a última versão publicada neste repositório) → **Atualizar para X**. Vale o mesmo atualizador e a mesma conferência (SHA-256 do GitHub e do arquivo; o da IABS só entra quando quem pede é a tela da IABS). Durante a instalação a janela fecha; depois, abra pelo atalho. À mão, também vale rodar o `IntegradorIABS.msi` novo por cima.
 
 ## Desinstalar
 

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.ServiceProcess;
 using System.Text.Json;
+using IabsAgenteSenior.Atualizacao;
 using IabsAgenteSenior.Banco;
 using IabsAgenteSenior.Comandos;
 using IabsAgenteSenior.Configuracao;
@@ -69,6 +70,14 @@ public sealed class JanelaPrincipal : Form
     private readonly Label _lancamento = Valor();
     private readonly Label _pasta = Valor();
     private readonly Button _iniciarServico = Botao("Iniciar serviço");
+
+    // versão e atualização (2.1.0)
+    private readonly Label _versaoInstalada = Valor();
+    private readonly Button _verificar = Botao("Verificar atualização");
+    private readonly Button _atualizarAgora = Botao("Atualizar agora", destaque: true);
+    private readonly Label _situacaoAtualizacao = Resultado();
+    private readonly System.Windows.Forms.Timer _acompanharAtualizacao = new() { Interval = 2_000 };
+    private VersaoPublicada? _disponivel;
 
     // rodapé
     private readonly Label _status = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = CorSecundaria, AutoEllipsis = true };
@@ -281,6 +290,15 @@ public sealed class JanelaPrincipal : Form
         Linha(t, "Pedidos atendidos", _pedidos, dica: "Desde que o serviço iniciou. O detalhe de cada pedido fica no log (sem dado de colaborador).");
         Linha(t, "Lançar atestados", _lancamento);
         Linha(t, "Pasta de dados", _pasta);
+        // versão e atualização (2.1.0)
+        _versaoInstalada.Text = Constantes.Versao;
+        _verificar.Click += async (_, _) => await VerificarAtualizacaoAsync();
+        _atualizarAgora.Click += (_, _) => AtualizarAgora();
+        _atualizarAgora.Visible = false;
+        _botoesAcao.AddRange([_verificar, _atualizarAgora]);
+        Linha(t, "Versão instalada", Fluxo(_versaoInstalada, _verificar, _atualizarAgora),
+            dica: "A versão nova vem só do repositório oficial (github.com/" + Constantes.RepositorioOficial + ") e só é instalada se o SHA-256 conferir.");
+        Linha(t, "", _situacaoAtualizacao);
         var atualizar = Botao("Atualizar");
         atualizar.Click += (_, _) => AtualizarSituacao();
         var diagnostico = Botao("Gerar diagnóstico");
@@ -534,6 +552,22 @@ public sealed class JanelaPrincipal : Form
         }
 
         _pasta.Text = _caminhos.PastaDados;
+        // a última atualização (2.1.0), quando não há uma em andamento nesta janela
+        if (!_acompanharAtualizacao.Enabled && ArquivosAtualizacao.LerSituacao(_caminhos) is { } a)
+        {
+            if (a.Situacao == "INSTALANDO" && a.Versao == Constantes.Versao)
+            {
+                Mostrar(_situacaoAtualizacao, true, $"Atualizada para a versão {a.Versao} em {a.Em.LocalDateTime:dd/MM/yyyy HH:mm}.");
+            }
+            else if (a.Situacao == "INSTALANDO")
+            {
+                Mostrar(_situacaoAtualizacao, false, $"A atualização para {a.Versao} não terminou: veja o log em {Path.Combine(ArquivosAtualizacao.Pasta(_caminhos), $"instalar-{a.Versao}.log")}.");
+            }
+            else if (a.Situacao == "ERRO")
+            {
+                Mostrar(_situacaoAtualizacao, false, "Última tentativa: " + TextoDaAtualizacao(a));
+            }
+        }
         var st = StatusPainel.Ler(_caminhos);
         if (st is null || !st.Configurado)
         {
@@ -559,6 +593,86 @@ public sealed class JanelaPrincipal : Form
         _pedidos.Text = st.Pedidos.ToString("N0", CultureInfo.CurrentCulture);
         _lancamento.Text = st.GravacaoLiberada ? "liberado" : "desligado (a IABS só lê)";
     }
+
+    // ---- atualização (2.1.0) ------------------------------------------------------------------
+    private async Task VerificarAtualizacaoAsync()
+    {
+        Ocupado(true, "Consultando a última versão publicada...");
+        _atualizarAgora.Visible = false;
+        _disponivel = null;
+        try
+        {
+            var proxy = _atual?.Proxy ?? new ConfiguracaoProxy();
+            var v = await Task.Run(() => VerificadorAtualizacao.UltimaVersaoAsync(proxy, CancellationToken.None));
+            if (v is null)
+            {
+                Mostrar(_situacaoAtualizacao, false, "Não achei versão publicada com instalador no repositório oficial.");
+            }
+            else if (RegrasAtualizacao.MaisNova(v.Versao, Constantes.Versao))
+            {
+                _disponivel = v;
+                _atualizarAgora.Text = $"Atualizar para {v.Versao}";
+                _atualizarAgora.Visible = true;
+                Mostrar(_situacaoAtualizacao, true, $"Versão {v.Versao} disponível (a instalada é a {Constantes.Versao}).");
+            }
+            else
+            {
+                Mostrar(_situacaoAtualizacao, true, $"Esta é a versão mais nova ({Constantes.Versao}).");
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            Mostrar(_situacaoAtualizacao, false, "Não consegui consultar o GitHub. Confira a rede, o proxy e o firewall (libere github.com, api.github.com e *.githubusercontent.com).");
+        }
+        finally
+        {
+            Ocupado(false);
+        }
+    }
+
+    private void AtualizarAgora()
+    {
+        if (_disponivel is null) return;
+        var resposta = MessageBox.Show(this,
+            $"Instalar a versão {_disponivel.Versao} do Integrador IABS?\n\n" +
+            "O instalador é baixado do repositório oficial e conferido pelo SHA-256. Durante a instalação o integrador fica " +
+            "desconectado por alguns instantes e esta janela fecha; depois, abra de novo pelo atalho. A configuração fica.",
+            "Atualizar o Integrador IABS", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+        if (resposta != DialogResult.Yes) return;
+        try
+        {
+            VerificadorAtualizacao.PedirAgora(_caminhos, _disponivel);
+            _atualizarAgora.Visible = false;
+            _acompanharAtualizacao.Tick -= AcompanharAtualizacao;
+            _acompanharAtualizacao.Tick += AcompanharAtualizacao;
+            _acompanharAtualizacao.Start();
+            AcompanharAtualizacao(null, EventArgs.Empty);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            Mostrar(_situacaoAtualizacao, false, ex is UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException { InnerException: System.ComponentModel.Win32Exception }
+                ? "Este usuário do Windows não pode ligar o atualizador. Use quem instalou, ou rode o instalador novo como administrador."
+                : ex.Message);
+        }
+    }
+
+    private void AcompanharAtualizacao(object? sender, EventArgs e)
+    {
+        var s = ArquivosAtualizacao.LerSituacao(_caminhos);
+        if (s is null) return;
+        var texto = TextoDaAtualizacao(s);
+        Mostrar(_situacaoAtualizacao, s.Situacao != "ERRO", texto);
+        if (s.Situacao == "ERRO") _acompanharAtualizacao.Stop();
+    }
+
+    private static string TextoDaAtualizacao(SituacaoAtualizacao s) => s.Situacao switch
+    {
+        "PEDIDA" => $"Atualização para {s.Versao} pedida: aguardando o atualizador...",
+        "BAIXANDO" => $"Baixando e conferindo a versão {s.Versao}...",
+        "INSTALANDO" => $"Instalando a versão {s.Versao}: o serviço reinicia e esta janela fecha em instantes.",
+        "ERRO" => $"A atualização para {s.Versao} não foi feita ({s.Codigo}). Nada foi instalado.",
+        _ => $"Atualização para {s.Versao}: {s.Situacao}.",
+    };
 
     private void IniciarServico()
     {
