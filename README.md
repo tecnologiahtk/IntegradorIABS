@@ -2,7 +2,7 @@
 
 Programa da IABS instalado num servidor Windows do cliente. É a ponte entre a IABS e o banco do Senior (SQL Server) na rede interna do cliente, sem VPN e sem abrir porta de entrada.
 
-**[Baixar o instalador (última versão)](https://github.com/joaofelixiabs/IntegradorIABS/releases/latest/download/IntegradorIABS.msi)** · [todas as versões](https://github.com/joaofelixiabs/IntegradorIABS/releases)
+**[Baixar o instalador (última versão)](https://github.com/tecnologiahtk/IntegradorIABS/releases/latest/download/IntegradorIABS.msi)** · [todas as versões](https://github.com/tecnologiahtk/IntegradorIABS/releases)
 
 O código está aberto para leitura: a TI do cliente pode conferir aqui tudo o que o programa faz (ver [LICENCA.md](LICENCA.md)).
 
