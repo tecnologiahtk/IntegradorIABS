@@ -14,9 +14,12 @@
            InstallerVersion="500">
 
     <SummaryInformation Description="Integrador IABS: ponte entre a IABS e o banco do Senior, só com conexão de saída." />
-    <!-- AllowSameVersionUpgrades: reinstalar a mesma versão por cima (2.1.0) -->
+    <!-- AllowSameVersionUpgrades: reinstalar a mesma versão por cima (2.1.0).
+         IgnoreLanguage (2.1.2): reconhece a versão anterior em qualquer idioma. Até
+         a 2.1.0 o pacote era 1033 (inglês) e depois 1046 (português); sem isto a
+         versão nova instalava ao lado da antiga, sem trocar os arquivos. -->
     <MajorUpgrade DowngradeErrorMessage="Uma versão mais nova do Integrador IABS já está instalada."
-                  Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes" />
+                  Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes" IgnoreLanguage="yes" />
 
     <!-- Telas da instalação (2.1.0), em português: boas-vindas, licença de código
          visível, escolha da pasta e confirmação. Na atualização (inclusive a
