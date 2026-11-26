@@ -25,8 +25,8 @@ O código está aberto para leitura: a TI do cliente pode conferir aqui tudo o q
 
 ## Instalar
 
-1. Rode o `IntegradorIABS.msi` como administrador (Windows Server 2019 ou mais novo, 64 bits). O controle de conta de usuário aparece só aqui.
-2. No fim abre a janela **Configurar Integrador IABS**:
+1. Rode o `IntegradorIABS.msi` como administrador (Windows Server 2019 ou mais novo, 64 bits) e escolha a pasta de instalação. O controle de conta de usuário aparece só aqui.
+2. No fim abre a janela **Configurar Integrador IABS** (depois, pelo atalho **Integrador IABS** na Área de Trabalho):
    - **aba 1:** o endereço e a chave que a IABS entregou;
    - **aba 2:** o SQL Server do Senior (porta padrão 1433) e, se a empresa quiser que a IABS lance os atestados, a caixa de liberação.
 3. Testar e Salvar. Em até 15 segundos o integrador se conecta à IABS.

@@ -68,8 +68,8 @@ Exemplo de `entrada.json` (o arquivo é apagado depois de lido):
 
 ## Instalar no servidor do cliente
 
-1. Rodar o MSI como administrador. Ele confere os requisitos (Windows 64 bits, Windows Server 2019 / build 17763 ou mais novo, administrador) e instala o serviço "Integrador IABS" (conta virtual `NT SERVICE\IabsAgenteSenior`, início automático atrasado, reinício em caso de falha).
-2. No fim, abre a janela **Configurar Integrador IABS** (também no menu Iniciar):
+1. Rodar o MSI como administrador. Ele confere os requisitos (Windows 64 bits, Windows Server 2019 / build 17763 ou mais novo, administrador), mostra a licença, **pergunta a pasta** (padrão `C:\Program Files\IABS\AgenteSenior`; nas atualizações fica a mesma) e instala o serviço "Integrador IABS" (conta virtual `NT SERVICE\IabsAgenteSenior`, início automático atrasado, reinício em caso de falha), o atualizador (início manual) e os atalhos: **Integrador IABS** na Área de Trabalho e "Configurar Integrador IABS" no menu Iniciar.
+2. No fim, abre a janela **Configurar Integrador IABS** (também pelos atalhos):
    - aba 1: endereço da IABS e a chave do integrador (gerada na IABS, na conexão Integrador IABS);
    - aba 2: o SQL Server do Senior e, se a empresa quiser que a IABS lance os atestados, a caixa **Permitir que a IABS lance os atestados**;
    - testar e Salvar. A aba 3 mostra se o canal está conectado e o último pedido.

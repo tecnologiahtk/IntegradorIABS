@@ -1,5 +1,6 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
-     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
 
   <!-- Instalador do Integrador IABS (docs/protocolo-canal.md e LEIAME.md). -->
   <Package Name="Integrador IABS"
@@ -8,10 +9,24 @@
            UpgradeCode="6F1D2B7A-3C4E-4A9B-9E21-5B7C8D9E0A13"
            Scope="perMachine"
            Compressed="yes"
+           Language="1046"
+           Codepage="1252"
            InstallerVersion="500">
 
     <SummaryInformation Description="Integrador IABS: ponte entre a IABS e o banco do Senior, só com conexão de saída." />
-    <MajorUpgrade DowngradeErrorMessage="Uma versão mais nova do Integrador IABS já está instalada." Schedule="afterInstallInitialize" />
+    <!-- AllowSameVersionUpgrades: reinstalar a mesma versão por cima (2.1.0) -->
+    <MajorUpgrade DowngradeErrorMessage="Uma versão mais nova do Integrador IABS já está instalada."
+                  Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes" />
+
+    <!-- Telas da instalação (2.1.0), em português: boas-vindas, licença de código
+         visível, escolha da pasta e confirmação. Na atualização (inclusive a
+         automática, sem telas), a pasta é a da instalação anterior, lida do
+         registro antes de a versão antiga sair. -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="Licenca.rtf" />
+    <Property Id="INSTALLFOLDER">
+      <RegistrySearch Id="PastaAnterior" Root="HKLM" Key="SOFTWARE\IABS\AgenteSenior" Name="PastaInstalacao" Type="raw" Bitness="always64" />
+    </Property>
     <MediaTemplate EmbedCab="yes" />
 
     <!-- Requisitos da máquina: conferidos antes de instalar. Não há runtime a
@@ -27,8 +42,7 @@
     <Launch Condition="Privileged"
             Message="A instalação do Integrador IABS precisa de privilégio de administrador." />
 
-    <!-- Painel de Controle: só "Desinstalar" -->
-    <Property Id="ARPNOMODIFY" Value="1" />
+    <!-- Painel de Controle: só "Desinstalar" (o ARPNOMODIFY vem das telas do WixUI) -->
     <Property Id="ARPNOREPAIR" Value="1" />
     <Property Id="ARPCONTACT" Value="Suporte IABS" />
     <Property Id="ARPCOMMENTS" Value="Ponte entre a IABS e o banco do Senior: só conexão de saída e operações fixas." />
@@ -40,6 +54,7 @@
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
     <StandardDirectory Id="StartupFolder" />
+    <StandardDirectory Id="DesktopFolder" />
 
     <Feature Id="Principal" Title="Integrador IABS" Level="1">
       <ComponentGroupRef Id="Binarios" />
@@ -78,6 +93,15 @@
                   WorkingDirectory="INSTALLFOLDER" />
         <!-- padrão do WiX para atalho: chave do usuário que instala como KeyPath (ICE57) -->
         <RegistryValue Root="HKCU" Key="Software\IABS\AgenteSenior" Name="AtalhoConfigurador" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <!-- atalho na Área de Trabalho (2.1.0): abre a mesma janela de configuração -->
+      <Component Id="AtalhoAreaDeTrabalho" Directory="DesktopFolder">
+        <Shortcut Id="AtalhoDesktop"
+                  Name="Integrador IABS"
+                  Description="Configura o Integrador IABS e mostra se ele está conectado à IABS."
+                  Target="[#ArquivoConfigurador]"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\IABS\AgenteSenior" Name="AtalhoAreaDeTrabalho" Type="integer" Value="1" KeyPath="yes" />
       </Component>
 
       <!-- o executável e o serviço do Windows -->

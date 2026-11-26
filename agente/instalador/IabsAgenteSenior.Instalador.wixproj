@@ -11,10 +11,13 @@
     <DefineConstants>Versao=$(Versao);Publicar=$(Publicar)</DefineConstants>
     <OutputPath>$(MSBuildProjectDirectory)\..\publicar\msi\</OutputPath>
     <SuppressIces>ICE61</SuppressIces>
+    <!-- telas do instalador em português (2.1.0) -->
+    <Cultures>pt-BR</Cultures>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
   </ItemGroup>
 
 </Project>
