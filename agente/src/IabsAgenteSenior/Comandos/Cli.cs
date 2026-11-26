@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using IabsAgenteSenior.Atualizacao;
 using IabsAgenteSenior.Banco;
 using IabsAgenteSenior.Configuracao;
 using IabsAgenteSenior.Diagnostico;
@@ -32,6 +33,8 @@ public static class Cli
           testar-iabs       Testa o canal com a IABS (valida a chave e fecha, sem derrubar o serviço).
           diagnostico       Gera um pacote .zip para o suporte da IABS, sem dado de colaborador.
           servico           Roda o serviço neste console (para teste).
+          atualizador       Roda o atualizador uma vez (como administrador): instala o pedido deixado pela IABS,
+                            conferido pelo SHA-256 da IABS, do GitHub e do arquivo.
           versao            Mostra a versão.
 
         Opção geral:
@@ -63,6 +66,7 @@ public static class Cli
                 "testar-iabs" => await TestarIabsAsync(CarregarConfig(caminhos), caminhos),
                 "diagnostico" => Escrever($"Pacote gerado: {PacoteDiagnostico.Gerar(caminhos)}"),
                 "servico" => await RodarServicoAsync(caminhos, console: true),
+                "atualizador" => await RodarAtualizadorAsync(caminhos),
                 "remover-dados" => RemoverDados(caminhos, opcoes),
                 "preparar-instalacao" => PrepararInstalacao(caminhos, opcoes),
                 _ => Escrever($"Comando desconhecido: {opcoes.Comando}\n\n{Ajuda}", 2),
@@ -105,6 +109,26 @@ public static class Cli
         builder.Services.AddHostedService<ServicoAgente>();
         await builder.Build().RunAsync();
         return 0;
+    }
+
+    // ---- atualizador (2.1.0) ---------------------------------------------------------------
+    /// <summary>Como serviço (iniciado pelo integrador): roda uma vez e para. No console: roda uma vez e mostra o resultado.</summary>
+    private static async Task<int> RodarAtualizadorAsync(Caminhos caminhos)
+    {
+        if (WindowsServiceHelpers.IsWindowsService())
+        {
+            var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { Args = [], ContentRootPath = AppContext.BaseDirectory });
+            builder.Services.AddWindowsService(o => o.ServiceName = Constantes.NomeServicoAtualizador);
+            builder.Logging.ClearProviders();
+            builder.Logging.AddProvider(new ArquivoLoggerProvider(caminhos.PastaLogs));
+            builder.Services.AddSingleton(caminhos);
+            builder.Services.AddHostedService<ServicoAtualizador>();
+            await builder.Build().RunAsync();
+            return 0;
+        }
+        var r = await new Atualizador(caminhos, Logger(caminhos)).ExecutarAsync(CancellationToken.None);
+        Console.WriteLine($"Atualização para {r.Versao}: {r.Situacao}{(r.Codigo is null ? "" : $" ({r.Codigo})")}.");
+        return r.Situacao is "INSTALANDO" ? 0 : 1;
     }
 
     // ---- requisitos -----------------------------------------------------------------------
@@ -271,6 +295,8 @@ public static class Cli
     private static int RemoverDados(Caminhos caminhos, Opcoes opcoes)
     {
         if (opcoes.Tem("--manter")) return 0;
+        // a lista de quem abre a janela sem administrador (gravada pela instalação) sai junto (2.1.0)
+        Console.WriteLine(PermissoesInstalacao.Limpar());
         var pendentes = PastaDados.Remover(caminhos.PastaDados);
         Console.WriteLine(pendentes == 0
             ? $"Pasta de dados removida: {caminhos.PastaDados}"

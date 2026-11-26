@@ -76,22 +76,33 @@ Exemplo de `entrada.json` (o arquivo é apagado depois de lido):
 3. Sem interface gráfica (Server Core) ou em instalação silenciosa: `"C:\Program Files\IABS\AgenteSenior\IabsAgenteSenior.exe" configurar` (assistente) ou `configurar --arquivo config.json`.
 4. O serviço se conecta à IABS em até 15 segundos depois de salvar e fica conectado.
 
-Comandos: `requisitos`, `configurar`, `testar-banco`, `testar-iabs`, `diagnostico`, `servico`, `versao`. `IabsAgenteSenior.exe ajuda` mostra todos.
+Comandos: `requisitos`, `configurar`, `testar-banco`, `testar-iabs`, `diagnostico`, `servico`, `atualizador`, `versao`. `IabsAgenteSenior.exe ajuda` mostra todos.
 
 ### O que pedir à TI do cliente
 
-- **Rede:** saída HTTPS (443) do servidor para o endereço da IABS, com WebSocket liberado no proxy, se houver.
+- **Rede:** saída HTTPS (443) do servidor para o endereço da IABS, com WebSocket liberado no proxy, se houver. Para a atualização automática (2.1.0), também `github.com`, `api.github.com` e `*.githubusercontent.com` (de onde o atualizador baixa a versão nova).
 - **Banco:** um login no SQL Server do Senior com leitura nas tabelas `r034fun`, `r034cpl`, `r016orn`, `r018ccu`, `r024car`, `r030fil`, `r006esc`, `r010sit` e `r038afa`; para lançar os atestados, também INSERT, UPDATE e DELETE na `r038afa`.
+
+## Atualizar
+
+Desde a 2.1.0, a IABS atualiza o integrador: na tela de Integrações aparece "versão nova disponível → Atualizar". O pedido vai pelo canal e o integrador liga o serviço **Integrador IABS (atualizador)** (início manual, como SYSTEM). Ele:
+
+1. só aceita versão mais nova que a instalada;
+2. pega na API do GitHub o SHA-256 do `IntegradorIABS.msi` daquela versão, neste repositório, e confere com o que a IABS mandou;
+3. baixa o instalador (só HTTPS, só GitHub) e confere o SHA-256 do arquivo;
+4. roda `msiexec /i ... /qn` e se desliga. O instalador para o integrador, troca os arquivos e liga de novo; a configuração fica.
+
+Se qualquer conferência falhar, nada é instalado, e o motivo aparece na tela da IABS (`atualizacao.json` na pasta de dados). À mão, também vale rodar o `IntegradorIABS.msi` novo por cima.
 
 ## Desinstalar
 
-Painel de Controle → Programas → "Integrador IABS" → Desinstalar. Remove o serviço, `C:\Program Files\IABS\AgenteSenior` e `C:\ProgramData\IABS\AgenteSenior` (configuração, situação e logs). Na atualização de versão os dados ficam. Para remover o programa e manter os dados: `msiexec /x IntegradorIABS-2.0.0.msi MANTERDADOS=1`.
+Painel de Controle → Programas → "Integrador IABS" → Desinstalar. Remove os dois serviços (o integrador e o atualizador), `C:\Program Files\IABS\AgenteSenior`, `C:\ProgramData\IABS\AgenteSenior` (configuração, situação e logs) e, desde a 2.1.0, a lista de quem abre a janela sem administrador (`HKLM\SOFTWARE\IABS\AgenteSenior`). Na atualização de versão os dados ficam. Para remover o programa e manter os dados: `msiexec /x IntegradorIABS-2.0.0.msi MANTERDADOS=1`.
 
 Não saem com a desinstalação: o login do banco (DBA), regras de firewall e proxy (TI) e a chave do integrador (gere outra ou exclua a conexão na IABS).
 
 ## O que o integrador nunca faz
 
-Roda SQL vindo de fora; grava em tabela que não seja a r038afa; altera ou apaga linha sem a marca da IABS ("IABS #…" no obsafa); grava sem a caixa de liberação marcada; abre porta de entrada; chama PowerShell, cmd ou outro processo; baixa e executa código; roda como administrador; grava fora de `C:\ProgramData\IABS\AgenteSenior`; manda à IABS o texto livre do obsafa ou a mensagem de erro do banco; registra CPF, nome, CID ou e-mail em log (o log mascara o que parecer CPF ou e-mail).
+Roda SQL vindo de fora; baixa ou instala programa que não seja o instalador oficial deste repositório, conferido pelo SHA-256 da IABS, do GitHub e do arquivo; grava em tabela que não seja a r038afa; altera ou apaga linha sem a marca da IABS ("IABS #…" no obsafa); grava sem a caixa de liberação marcada; abre porta de entrada; chama PowerShell, cmd ou outro processo (o atualizador chama só o `msiexec`); roda como administrador (só o atualizador roda como SYSTEM, e só para instalar); grava fora de `C:\ProgramData\IABS\AgenteSenior`; manda à IABS o texto livre do obsafa ou a mensagem de erro do banco; registra CPF, nome, CID ou e-mail em log (o log mascara o que parecer CPF ou e-mail).
 
 ## Pendências
 

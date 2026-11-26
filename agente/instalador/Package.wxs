@@ -100,6 +100,21 @@
                               ResetPeriodInDays="1" />
         </ServiceInstall>
         <ServiceControl Id="ControlarServico" Name="IabsAgenteSenior" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+        <!-- O atualizador (2.1.0): o mesmo executável, com o argumento "atualizador",
+             como SYSTEM e só com início manual. O integrador o liga quando a IABS
+             pede uma versão nova (o PrepararInstalacao dá a ele só essa permissão);
+             ele confere o SHA-256 (IABS, GitHub e arquivo), roda o msiexec e para. -->
+        <ServiceInstall Id="InstalarAtualizador"
+                        Name="IabsIntegradorAtualizador"
+                        DisplayName="Integrador IABS (atualizador)"
+                        Description="Instala a versão nova do Integrador IABS quando a IABS pede, só do repositório oficial e conferida pelo SHA-256. Não fica rodando."
+                        Type="ownProcess"
+                        Start="demand"
+                        ErrorControl="normal"
+                        Account="LocalSystem"
+                        Arguments="atualizador"
+                        Vital="yes" />
+        <ServiceControl Id="ControlarAtualizador" Name="IabsIntegradorAtualizador" Stop="both" Remove="uninstall" Wait="yes" />
       </Component>
 
       <Component Id="RegistroAgente">

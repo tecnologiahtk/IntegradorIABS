@@ -1,13 +1,19 @@
 using System.Text.Json;
+using IabsAgenteSenior.Atualizacao;
 using IabsAgenteSenior.Banco;
 
 namespace IabsAgenteSenior.Canal;
 
 /// <summary>
 /// Pedido da IABS → operação fixa. Só os nomes desta tabela existem; a
-/// gravação só passa com a liberação marcada na janela do integrador.
+/// gravação só passa com a liberação marcada na janela do integrador. O
+/// pedido de atualização (2.1.0) só deixa o pedido para o atualizador, que
+/// confere tudo de novo antes de instalar.
 /// </summary>
-public sealed class Despachante(IOperacoesSenior operacoes, Func<bool> gravacaoLiberada)
+public sealed class Despachante(
+    IOperacoesSenior operacoes,
+    Func<bool> gravacaoLiberada,
+    Func<PedidoAtualizacao, CancellationToken, Task>? pedirAtualizacao = null)
 {
     private delegate Task<object> Operacao(Parametros p, CancellationToken ct);
 
@@ -49,12 +55,26 @@ public sealed class Despachante(IOperacoesSenior operacoes, Func<bool> gravacaoL
         },
         ["apagar"] = async (p, ct) => new { afetadas = await operacoes.ApagarAsync(p.Chave(), p.Marca(), ct) },
         ["trocar"] = async (p, ct) => new { afetadas = await operacoes.TrocarAsync(p.Chaves("apagar"), p.Nova(), p.Marca(), ct) },
+        ["atualizar_integrador"] = async (p, ct) =>
+        {
+            var versao = p.Texto("versao", 20);
+            var sha256 = p.Texto("sha256", 64);
+            if (!RegrasAtualizacao.VersaoValida(versao)) throw Invalido("versao");
+            if (!RegrasAtualizacao.Sha256Valido(sha256)) throw Invalido("sha256");
+            if (!RegrasAtualizacao.MaisNova(versao, Constantes.Versao)) throw new ErroOperacao("ATUALIZACAO_DESNECESSARIA");
+            if (pedirAtualizacao is null) throw new ErroOperacao("ATUALIZACAO_INDISPONIVEL");
+            await pedirAtualizacao(new PedidoAtualizacao(versao, sha256, DateTimeOffset.Now), ct);
+            return new { situacao = "AGENDADA", versao, atual = Constantes.Versao };
+        },
     };
+
+    private static ErroOperacao Invalido(string campo) =>
+        new("PARAMETRO_INVALIDO", new Dictionary<string, object?> { ["campo"] = campo });
 
     /// <summary>As operações que esta versão sabe fazer (vão na mensagem "ola").</summary>
     public static IReadOnlyList<string> Nomes { get; } =
         ["testar", "situacoes", "colaboradores", "afastamentos", "marca_na_pessoa", "marca_nas_empresas", "linha_existe",
-         "lancar", "atualizar", "apagar", "trocar"];
+         "lancar", "atualizar", "apagar", "trocar", "atualizar_integrador"];
 
     public static bool Grava(string op) => Gravacoes.Contains(op);
 

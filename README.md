@@ -11,6 +11,7 @@ O código está aberto para leitura: a TI do cliente pode conferir aqui tudo o q
 - Abre **uma conexão de saída** (WebSocket sobre HTTPS) com a IABS e a mantém aberta. Nenhuma porta de entrada é aberta no servidor.
 - Atende só **operações fixas**, com o SQL dentro do programa: ler os colaboradores e conferir, lançar, corrigir e apagar afastamentos na tabela `r038afa`. A IABS manda o nome da operação e os parâmetros, **nunca SQL**. A lista completa está em [`docs/protocolo-canal.md`](docs/protocolo-canal.md) e o SQL em [`OperacoesSenior.cs`](agente/src/IabsAgenteSenior/Banco/OperacoesSenior.cs).
 - Guarda a **senha do banco só no servidor do cliente**, cifrada pelo Windows. A IABS só conhece a chave do integrador, que ela mesma gera.
+- **Atualiza-se quando a IABS pede** (desde a 2.1.0): um serviço separado, o atualizador, baixa a versão nova **só deste repositório** e só instala se o SHA-256 do instalador for o mesmo em três lugares: o que a IABS mandou, o publicado aqui no GitHub e o do arquivo baixado. Só versão mais nova. O código está em [`agente/src/IabsAgenteSenior/Atualizacao`](agente/src/IabsAgenteSenior/Atualizacao).
 
 ## O que ele nunca faz
 
@@ -19,7 +20,8 @@ O código está aberto para leitura: a TI do cliente pode conferir aqui tudo o q
 - Alterar ou apagar linha sem a marca da IABS ("IABS #…" no campo de observação). Os lançamentos do RH e do ponto nunca são tocados.
 - Gravar qualquer coisa sem a caixa **"Permitir que a IABS lance os atestados"** marcada pela TI.
 - Mandar à IABS o texto da observação do RH ou a mensagem de erro do banco.
-- Abrir porta de entrada, chamar outros programas, baixar e executar código ou registrar CPF, nome, CID ou e-mail em log.
+- Abrir porta de entrada, ou registrar CPF, nome, CID ou e-mail em log.
+- Baixar e executar código, a não ser o instalador oficial deste repositório, conferido como acima. O único programa que ele chama é o `msiexec` do Windows, para instalar esse arquivo.
 
 ## Instalar
 

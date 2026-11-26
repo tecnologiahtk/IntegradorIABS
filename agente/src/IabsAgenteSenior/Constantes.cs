@@ -19,4 +19,14 @@ public static class Constantes
             .InformationalVersion.Split('+')[0] ?? "0.0.0";
 
     public static string UserAgent => $"IABS-Integrador/{Versao}";
+
+    // ---- atualização (2.1.0) ---------------------------------------------------------
+    /// <summary>Serviço do atualizador: roda como SYSTEM, só quando o integrador pede, e instala a versão nova.</summary>
+    public const string NomeServicoAtualizador = "IabsIntegradorAtualizador";
+
+    /// <summary>O único lugar de onde o atualizador baixa: as versões publicadas do repositório oficial.</summary>
+    public const string RepositorioOficial = "tecnologiahtk/IntegradorIABS";
+
+    /// <summary>Nome fixo do instalador em cada versão publicada.</summary>
+    public const string ArquivoInstalador = "IntegradorIABS.msi";
 }

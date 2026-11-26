@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using IabsAgenteSenior.Atualizacao;
 using IabsAgenteSenior.Banco;
 using IabsAgenteSenior.Configuracao;
 using Microsoft.Extensions.Logging;
@@ -31,7 +32,8 @@ public sealed class CanalIabs(
     Func<CancellationToken, Task<InfoBanco>> infoBanco,
     EstadoCanal estado,
     ILogger logger,
-    Func<HttpMessageInvoker>? criarInvoker = null)
+    Func<HttpMessageInvoker>? criarInvoker = null,
+    Func<SituacaoAtualizacao?>? ultimaAtualizacao = null)
 {
     private static readonly TimeSpan[] Esperas =
         [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10),
@@ -263,6 +265,10 @@ public sealed class CanalIabs(
             banco_erro = erro,
             gravacao = cfg.GravacaoLiberada,
             operacoes = Despachante.Nomes,
+            // a última atualização pedida pela IABS (2.1.0): versão, situação e o código do erro, se houve
+            atualizacao = ultimaAtualizacao?.Invoke() is { } a
+                ? new { versao = a.Versao, situacao = a.Situacao, codigo = a.Codigo, em = a.Em }
+                : null,
         };
     }
 

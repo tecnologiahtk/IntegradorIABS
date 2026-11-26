@@ -85,7 +85,44 @@ public static class PermissoesInstalacao
                 mensagens.Add($"AVISO: não consegui liberar o serviço para {sid} ({ex.NativeErrorCode}).");
             }
         }
+        // o integrador (conta virtual do serviço) liga o atualizador quando a IABS pede (2.1.0)
+        try
+        {
+            var servico = (SecurityIdentifier)new NTAccount(Constantes.ContaServico).Translate(typeof(SecurityIdentifier));
+            LiberarServico(Constantes.NomeServicoAtualizador, servico);
+            mensagens.Add($"Atualizador: {Constantes.ContaServico} pode ligá-lo.");
+        }
+        catch (Exception ex) when (ex is Win32Exception or IdentityNotMappedException)
+        {
+            mensagens.Add($"AVISO: não consegui liberar o atualizador para o integrador ({ex.GetType().Name}).");
+        }
         return mensagens;
+    }
+
+    /// <summary>
+    /// Desinstalação de verdade (não atualização): apaga a lista de quem abre a
+    /// janela sem administrador e a chave do registro, se ficar vazia.
+    /// </summary>
+    public static string Limpar()
+    {
+        try
+        {
+            using (var chave = Registry.LocalMachine.OpenSubKey(ChaveRegistro, writable: true))
+            {
+                chave?.DeleteValue(ValorConfiguradores, throwOnMissingValue: false);
+            }
+            using (var chave = Registry.LocalMachine.OpenSubKey(ChaveRegistro))
+            {
+                var vazia = chave is not null && chave.ValueCount == 0 && chave.SubKeyCount == 0;
+                if (!vazia) return "Lista de configuradores removida do registro.";
+            }
+            Registry.LocalMachine.DeleteSubKey(ChaveRegistro, throwOnMissingSubKey: false);
+            return "Lista de configuradores e chave do registro removidas.";
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
+        {
+            return $"AVISO: não consegui limpar o registro ({ex.GetType().Name}).";
+        }
     }
 
     /// <summary>Todo mundo, usuários, sistema e serviços não entram na lista (só pessoas).</summary>

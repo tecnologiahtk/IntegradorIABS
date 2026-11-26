@@ -1,3 +1,5 @@
+using System.ServiceProcess;
+using IabsAgenteSenior.Atualizacao;
 using IabsAgenteSenior.Banco;
 using IabsAgenteSenior.Canal;
 using IabsAgenteSenior.Configuracao;
@@ -59,7 +61,9 @@ public sealed class ServicoAgente(Caminhos caminhos, ILoggerFactory fabrica) : B
         using var rodada = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         var banco = new BancoSenior(cfg.Banco, fabrica.CreateLogger<BancoSenior>());
         var operacoes = new OperacoesSenior(banco);
-        var canal = new CanalIabs(cfg, new Despachante(operacoes, () => cfg.GravacaoLiberada), operacoes.InfoAsync, _estado, fabrica.CreateLogger<CanalIabs>());
+        var despachante = new Despachante(operacoes, () => cfg.GravacaoLiberada, PedirAtualizacaoAsync);
+        var canal = new CanalIabs(cfg, despachante, operacoes.InfoAsync, _estado, fabrica.CreateLogger<CanalIabs>(),
+            ultimaAtualizacao: () => ArquivosAtualizacao.LerSituacao(caminhos));
         var tarefa = canal.RodarAsync(rodada.Token);
 
         while (!tarefa.IsCompleted)
@@ -81,6 +85,29 @@ public sealed class ServicoAgente(Caminhos caminhos, ILoggerFactory fabrica) : B
         {
         }
         _estado.Desconectou("Reabrindo o canal.");
+    }
+
+    /// <summary>
+    /// Pedido de atualização da IABS (2.1.0): deixa o pedido na pasta de dados e
+    /// liga o atualizador (serviço separado, como SYSTEM; o instalador deu a este
+    /// serviço só a permissão de ligá-lo). Quem confere e instala é o atualizador.
+    /// </summary>
+    private async Task PedirAtualizacaoAsync(PedidoAtualizacao pedido, CancellationToken ct)
+    {
+        try
+        {
+            ArquivosAtualizacao.GravarPedido(caminhos, pedido);
+            ArquivosAtualizacao.GravarSituacao(caminhos, new SituacaoAtualizacao(pedido.Versao, "PEDIDA", null, DateTimeOffset.Now));
+            using var sc = new ServiceController(Constantes.NomeServicoAtualizador);
+            if (sc.Status == ServiceControllerStatus.Stopped) sc.Start();
+            _logger.LogInformation("Atualização para {Versao} pedida pela IABS: atualizador ligado.", pedido.Versao);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning("Atualização para {Versao}: não consegui ligar o atualizador ({Tipo}).", pedido.Versao, ex.GetType().Name);
+            throw new ErroOperacao("ATUALIZACAO_FALHOU");
+        }
+        await Task.CompletedTask;
     }
 
     private bool MudouConfiguracao(DateTime gravadaEm)

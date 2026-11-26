@@ -89,6 +89,14 @@ Gravação (só com **"Permitir que a IABS lance os atestados"** marcado na jane
 | `apagar` | `{ chave, marca }` | `{ afetadas }`: DELETE da linha com a chave e a marca |
 | `trocar` | `{ apagar: [chave], nova: { pessoa, ini, fim, situacao, atendente }, marca }` | `{ afetadas }`: apaga as linhas da marca e lança a nova, numa transação |
 
+Atualização do programa (desde a 2.1.0; sempre liberada):
+
+| op | params | dados |
+|---|---|---|
+| `atualizar_integrador` | `{ versao: "2.1.1", sha256: "<64 hex>" }` | `{ situacao: "AGENDADA", versao, atual }`: o integrador deixa o pedido e liga o atualizador (serviço como SYSTEM), que confere de novo a versão, o SHA-256 da IABS contra o do GitHub (`api.github.com/repos/tecnologiahtk/IntegradorIABS/releases/tags/v<versao>`, asset `IntegradorIABS.msi`) e o do arquivo baixado, e roda o `msiexec`. Erros: `PARAMETRO_INVALIDO`, `ATUALIZACAO_DESNECESSARIA` (versão não é mais nova), `ATUALIZACAO_FALHOU` (não ligou o atualizador) |
+
+O "ola" leva a última atualização: `"atualizacao": { "versao", "situacao": "PEDIDA" | "BAIXANDO" | "INSTALANDO" | "ERRO", "codigo", "em" }` (ou `null`). Códigos do atualizador: `VERSAO_NAO_E_MAIS_NOVA`, `VERSAO_NAO_PUBLICADA`, `VERSAO_SEM_INSTALADOR`, `GITHUB_INDISPONIVEL`, `SHA256_DIVERGENTE_GITHUB`, `URL_INESPERADA`, `ENDERECO_NAO_PERMITIDO`, `DOWNLOAD_FALHOU`, `ARQUIVO_GRANDE_DEMAIS`, `SHA256_DIVERGENTE_ARQUIVO`, `INSTALADOR_NAO_INICIOU`.
+
 ## Erros (`erro.codigo`)
 
 | código | quando |
