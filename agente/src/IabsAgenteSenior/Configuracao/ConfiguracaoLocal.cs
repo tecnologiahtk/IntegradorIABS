@@ -4,12 +4,23 @@ using System.Text.Json.Serialization;
 namespace IabsAgenteSenior.Configuracao;
 
 /// <summary>
-/// O que fica só na máquina do cliente: endereço da IABS, chave do integrador,
-/// conexão do banco do Senior e a liberação de gravação. Segredos sempre
-/// cifrados (campos *Protegida). A senha do banco nunca vai para a IABS.
+/// Uma conexão do integrador, que fica só na máquina do cliente: endereço da
+/// IABS, chave do integrador, conexão do banco do Senior e a liberação de
+/// gravação. Segredos sempre cifrados (campos *Protegida). A senha do banco
+/// nunca vai para a IABS. O config.json guarda uma ou mais conexões
+/// (ConfiguracaoIntegrador, 2.2.0).
 /// </summary>
 public sealed class ConfiguracaoLocal
 {
+    /// <summary>Nome da conexão quando há uma só (e o da configuração da 2.1).</summary>
+    public const string NomePadrao = "Produção";
+
+    /// <summary>
+    /// Nome da conexão (2.2.0), ex.: "Produção" ou "Homologação". Único no
+    /// arquivo; aparece na janela, no ícone e no log.
+    /// </summary>
+    public string Nome { get; set; } = "";
+
     /// <summary>Endereço da IABS (ex.: https://app.iabs.med.br). Só o domínio conta: o caminho do canal é fixo.</summary>
     public string ApiUrl { get; set; } = "";
     public string ChaveApiProtegida { get; set; } = "";
@@ -30,23 +41,10 @@ public sealed class ConfiguracaoLocal
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public static ConfiguracaoLocal? Carregar(Caminhos caminhos)
-    {
-        if (!File.Exists(caminhos.ArquivoConfig)) return null;
-        return JsonSerializer.Deserialize<ConfiguracaoLocal>(File.ReadAllText(caminhos.ArquivoConfig), Json);
-    }
-
-    public void Salvar(Caminhos caminhos)
-    {
-        Directory.CreateDirectory(caminhos.PastaDados);
-        var temporario = caminhos.ArquivoConfig + ".novo";
-        File.WriteAllText(temporario, JsonSerializer.Serialize(this, Json));
-        File.Move(temporario, caminhos.ArquivoConfig, overwrite: true);
-    }
-
     /// <summary>Versão para o pacote de diagnóstico: sem nenhum segredo.</summary>
     public object SemSegredos() => new
     {
+        Nome,
         ApiUrl,
         ChaveApi = string.IsNullOrEmpty(ChaveApiProtegida) ? "não definida" : "definida",
         GravacaoLiberada,
@@ -93,6 +91,8 @@ public sealed class ConfiguracaoProxy
 /// </summary>
 public sealed class EntradaConfiguracao
 {
+    /// <summary>Nome da conexão (2.2.0). Vazio: a conexão que já existe, ou "Produção".</summary>
+    public string? Nome { get; set; }
     public string ApiUrl { get; set; } = "";
     public string ChaveApi { get; set; } = "";
     public ConfiguracaoBanco Banco { get; set; } = new();

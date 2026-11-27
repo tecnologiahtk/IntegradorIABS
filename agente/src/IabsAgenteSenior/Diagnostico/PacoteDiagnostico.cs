@@ -27,7 +27,7 @@ public static class PacoteDiagnostico
             ["sistema"] = RuntimeInformation.OSDescription,
             ["gerado_em"] = DateTimeOffset.Now,
             ["pasta_dados"] = caminhos.PastaDados,
-            ["configuracao"] = ConfiguracaoLocal.Carregar(caminhos)?.SemSegredos(),
+            ["conexoes"] = ConfiguracaoIntegrador.Carregar(caminhos)?.SemSegredos(),
             ["situacao"] = StatusPainel.Ler(caminhos),
         };
         var entrada = zip.CreateEntry("resumo.json");

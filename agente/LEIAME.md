@@ -4,7 +4,8 @@ Programa da IABS instalado no servidor Windows do cliente. É a ponte entre a IA
 
 - abre **uma conexão de saída** (WebSocket sobre HTTPS) com a IABS e a mantém aberta; nenhuma porta de entrada é aberta no cliente;
 - por ela, a IABS pede **operações fixas**: ler os colaboradores, conferir e lançar os atestados na r038afa; o SQL de cada operação está dentro do integrador (`src\IabsAgenteSenior\Banco\OperacoesSenior.cs`), e a IABS nunca manda SQL;
-- a **senha do banco fica só aqui**, cifrada pelo Windows; a IABS só conhece a chave do integrador.
+- a **senha do banco fica só aqui**, cifrada pelo Windows; a IABS só conhece a chave do integrador;
+- desde a 2.2.0, a mesma instalação atende **várias conexões** (ver "Várias conexões" abaixo).
 
 Na IABS, a conexão é a opção **Integrador IABS** em Governança → Configurações → Integrações. O contrato entre os dois lados está em [`..\docs\protocolo-canal.md`](../docs/protocolo-canal.md).
 
@@ -58,6 +59,7 @@ Exemplo de `entrada.json` (o arquivo é apagado depois de lido):
 
 ```json
 {
+  "nome": "Produção",
   "apiUrl": "http://127.0.0.1:5000",
   "chaveApi": "<chave gerada na IABS>",
   "banco": { "servidor": "srv-senior", "porta": 1433, "banco": "SENIOR", "schema": "dbo", "usuario": "iabs_integrador" },
@@ -72,11 +74,23 @@ Exemplo de `entrada.json` (o arquivo é apagado depois de lido):
 2. No fim, abre a janela **Configurar Integrador IABS** (também pelos atalhos):
    - aba 1: endereço da IABS e a chave do integrador (gerada na IABS, na conexão Integrador IABS);
    - aba 2: o SQL Server do Senior e, se a empresa quiser que a IABS lance os atestados, a caixa **Permitir que a IABS lance os atestados**;
-   - testar e Salvar. A aba 3 mostra se o canal está conectado e o último pedido.
+   - testar e Salvar. A aba 3 mostra se o canal de cada conexão está conectado e o último pedido.
 3. Sem interface gráfica (Server Core) ou em instalação silenciosa: `"C:\Program Files\IABS\AgenteSenior\IabsAgenteSenior.exe" configurar` (assistente) ou `configurar --arquivo config.json`.
 4. O serviço se conecta à IABS em até 15 segundos depois de salvar e fica conectado.
 
-Comandos: `requisitos`, `configurar`, `testar-banco`, `testar-iabs`, `diagnostico`, `servico`, `atualizador`, `versao`. `IabsAgenteSenior.exe ajuda` mostra todos.
+Comandos: `requisitos`, `configurar`, `conexoes`, `remover-conexao`, `testar-banco`, `testar-iabs`, `diagnostico`, `servico`, `atualizador`, `versao`. `IabsAgenteSenior.exe ajuda` mostra todos.
+
+### Várias conexões (2.2.0)
+
+Uma instalação pode atender mais de um ambiente: ex.: **Produção** (a IABS de produção com o Senior de produção) e **Homologação** (a IABS de homologação com o Senior de homologação, noutro servidor). Cada conexão tem nome, endereço da IABS, chave (gerada na tela de Integrações **daquele** ambiente da IABS) e banco do Senior próprios, e o serviço mantém um canal por conexão.
+
+- **Janela:** o seletor **Conexão** no topo escolhe a conexão das abas 1 e 2; **+ Nova conexão** cria outra (o nome vai na aba 1) e **Remover** tira a escolhida (a única não sai). Salvar grava só a conexão escolhida. A aba 3 tem uma linha por conexão.
+- **Serviço:** salvar ou remover uma conexão reabre só o canal dela; as outras seguem conectadas. Duas conexões não podem ter o mesmo nome nem a mesma chave.
+- **Ícone perto do relógio:** verde com todas conectadas; amarelo ou vermelho diz qual conexão está fora, e o menu tem uma linha por conexão.
+- **Log:** as linhas de cada conexão levam o nome dela entre colchetes (ex.: `CanalIabs [Homologação]`).
+- **Linha de comando:** `configurar --conexao Homologação` (nome novo cria a conexão), `conexoes`, `remover-conexao --conexao Homologação`, e `testar-banco`/`testar-iabs` testam todas ou só a de `--conexao`. No `--arquivo`, o campo `"nome"` escolhe a conexão.
+- **Atualização:** o programa é um só para todas as conexões. Qualquer uma pode receber o pedido de atualização da IABS, e a versão nova vale para todas na hora.
+- A configuração da 2.1 (uma conexão) é lida como a conexão **Produção**, sem refazer nada.
 
 ### O que pedir à TI do cliente
 
@@ -99,7 +113,7 @@ A TI também pode atualizar pela janela: aba **3. Situação** → **Verificar a
 
 ## Desinstalar
 
-Painel de Controle → Programas → "Integrador IABS" → Desinstalar. Remove os dois serviços (o integrador e o atualizador), `C:\Program Files\IABS\AgenteSenior`, `C:\ProgramData\IABS\AgenteSenior` (configuração, situação e logs) e, desde a 2.1.0, a lista de quem abre a janela sem administrador (`HKLM\SOFTWARE\IABS\AgenteSenior`). Na atualização de versão os dados ficam. Para remover o programa e manter os dados: `msiexec /x IntegradorIABS-2.0.0.msi MANTERDADOS=1`.
+Painel de Controle → Programas → "Integrador IABS" → Desinstalar. Remove os dois serviços (o integrador e o atualizador), `C:\Program Files\IABS\AgenteSenior`, `C:\ProgramData\IABS\AgenteSenior` (configuração, situação e logs) e, desde a 2.1.0, a lista de quem abre a janela sem administrador (`HKLM\SOFTWARE\IABS\AgenteSenior`). Na atualização de versão os dados ficam (todas as conexões). Para remover o programa e manter os dados: `msiexec /x IntegradorIABS-2.0.0.msi MANTERDADOS=1`.
 
 Não saem com a desinstalação: o login do banco (DBA), regras de firewall e proxy (TI) e a chave do integrador (gere outra ou exclua a conexão na IABS).
 

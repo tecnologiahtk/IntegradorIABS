@@ -131,7 +131,7 @@ public sealed class Atualizador(
 
     private HttpClient CriarHttp()
     {
-        var cfg = ConfiguracaoLocal.Carregar(caminhos);
+        var cfg = ConfiguracaoIntegrador.Carregar(caminhos);
         HttpMessageHandler h;
         if (handler is not null)
         {
@@ -139,7 +139,7 @@ public sealed class Atualizador(
         }
         else
         {
-            var s = Rede.CriarHandler(cfg?.Proxy ?? new ConfiguracaoProxy());
+            var s = Rede.CriarHandler(cfg?.ProxyPrincipal ?? new ConfiguracaoProxy());
             s.AllowAutoRedirect = false; // cada redirecionamento é conferido (só GitHub)
             h = s;
         }

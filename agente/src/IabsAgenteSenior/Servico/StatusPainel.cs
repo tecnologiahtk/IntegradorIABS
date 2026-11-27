@@ -1,20 +1,33 @@
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using IabsAgenteSenior.Configuracao;
 
 namespace IabsAgenteSenior.Servico;
 
 /// <summary>
 /// Situação do integrador para o ícone perto do relógio e para a janela: um
-/// status.json na pasta de dados, regravado pelo serviço a cada 15 segundos.
-/// Só datas, contagens e textos de situação — nenhum dado de colaborador. O
-/// arquivo ganha leitura para Usuários, porque o ícone roda sem administrador.
+/// status.json na pasta de dados, regravado pelo serviço a cada 15 segundos,
+/// com uma linha por conexão (2.2.0). Só datas, contagens e textos de
+/// situação — nenhum dado de colaborador. O arquivo ganha leitura para
+/// Usuários, porque o ícone roda sem administrador.
 /// </summary>
 public sealed record StatusAgente(
     string Versao,
     DateTimeOffset AtualizadoEm,
-    bool Configurado,
+    IReadOnlyList<StatusConexao>? Conexoes,
+    string? Mensagem)
+{
+    /// <summary>Sem conexão nenhuma (ou status da 2.1, sem a lista): aguardando configuração.</summary>
+    [JsonIgnore] public bool Configurado => Conexoes is { Count: > 0 };
+
+    [JsonIgnore] public IReadOnlyList<StatusConexao> Lista => Conexoes ?? [];
+}
+
+/// <summary>O canal de uma conexão com a IABS.</summary>
+public sealed record StatusConexao(
+    string Nome,
     bool Conectado,
     DateTimeOffset? ConectadoDesde,
     DateTimeOffset? DesconectadoDesde,

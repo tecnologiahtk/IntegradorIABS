@@ -17,6 +17,9 @@ namespace IabsAgenteSenior.Configurador;
 /// situação do serviço. Usa as mesmas regras do "configurar" da linha de
 /// comando (ServicoConfiguracao): testa o banco e a IABS antes de gravar, cifra
 /// os segredos e protege a pasta de dados. Senha e chave gravadas nunca aparecem.
+/// Várias conexões (2.2.0): o seletor no topo escolhe a conexão das abas 1 e 2
+/// (ex.: Produção e Homologação, cada uma com endereço, chave e banco
+/// próprios); a aba 3 mostra todas. Salvar grava só a conexão escolhida.
 /// </summary>
 public sealed class JanelaPrincipal : Form
 {
@@ -33,7 +36,27 @@ public sealed class JanelaPrincipal : Form
 
     private readonly Caminhos _caminhos;
     private readonly ILogger _logger;
+    private ConfiguracaoIntegrador _arquivo = new();
+
+    /// <summary>A conexão escolhida como está gravada (nula: conexão nova, ainda não salva).</summary>
     private ConfiguracaoLocal? _atual;
+
+    /// <summary>Nome da conexão nova, ainda não salva (uma por vez).</summary>
+    private string? _nova;
+
+    /// <summary>A conexão mostrada nas abas 1 e 2.</summary>
+    private string? _selecionada;
+
+    /// <summary>Os campos como foram carregados: diferente = alteração não salva.</summary>
+    private string _carregado = "";
+    private bool _preenchendo;
+    private bool _ocupado;
+
+    // conexões (2.2.0)
+    private readonly ComboBox _conexao = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 240, Margin = new Padding(3, 4, 10, 3) };
+    private readonly Button _novaConexao = Botao("+ Nova conexão");
+    private readonly Button _removerConexao = Botao("Remover");
+    private readonly TextBox _nome = Campo();
 
     // conexão com a IABS
     private readonly TextBox _url = Campo();
@@ -68,11 +91,11 @@ public sealed class JanelaPrincipal : Form
 
     // situação
     private readonly Label _servicoEstado = Valor();
-    private readonly Label _canal = Valor();
-    private readonly Label _conexaoIabs = Valor();
-    private readonly Label _ultimoPedido = Valor();
-    private readonly Label _pedidos = Valor();
-    private readonly Label _lancamento = Valor();
+    private readonly ListView _situacaoConexoes = new()
+    {
+        View = View.Details, FullRowSelect = true, HeaderStyle = ColumnHeaderStyle.Nonclickable, ShowItemToolTips = true,
+        Height = 118, Anchor = AnchorStyles.Left | AnchorStyles.Right, BorderStyle = BorderStyle.FixedSingle,
+    };
     private readonly Label _pasta = Valor();
     private readonly Button _iniciarServico = Botao("Iniciar serviço");
 
@@ -97,13 +120,14 @@ public sealed class JanelaPrincipal : Form
         Text = "Configurar Integrador IABS";
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(860, 700);
-        MinimumSize = new Size(780, 620);
+        ClientSize = new Size(860, 740);
+        MinimumSize = new Size(780, 660);
         BackColor = Color.White;
 
-        // o controle Fill entra primeiro; topo e rodapé depois
+        // o controle Fill entra primeiro; topo e rodapé depois (o último do topo fica em cima)
         Controls.Add(MontarAbas());
         Controls.Add(MontarRodape());
+        Controls.Add(MontarSeletor());
         Controls.Add(MontarCabecalho());
         _botoesAcao.Add(_salvar);
     }
@@ -202,6 +226,26 @@ public sealed class JanelaPrincipal : Form
         return p;
     }
 
+    /// <summary>Seletor de conexão (2.2.0), entre o cabeçalho e as abas.</summary>
+    private Control MontarSeletor()
+    {
+        var p = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 50, Padding = new Padding(26, 10, 16, 4), WrapContents = false, BackColor = CorFundoSuave };
+        var rotulo = new Label { Text = "Conexão", AutoSize = true, Margin = new Padding(0, 8, 6, 3), Font = new Font("Segoe UI Semibold", 9.5f) };
+        _conexao.SelectedIndexChanged += (_, _) =>
+        {
+            if (!_preenchendo) TrocarConexao();
+        };
+        _novaConexao.Click += (_, _) => NovaConexao();
+        _removerConexao.Click += (_, _) => RemoverConexao();
+        var dica = new Label
+        {
+            Text = "As abas 1 e 2 são da conexão escolhida; a 3 mostra todas.", AutoSize = true, ForeColor = CorSecundaria,
+            Margin = new Padding(6, 9, 3, 3), Font = new Font("Segoe UI", 8.5f),
+        };
+        p.Controls.AddRange([rotulo, _conexao, _novaConexao, _removerConexao, dica]);
+        return p;
+    }
+
     private Control MontarRodape()
     {
         var t = new TableLayoutPanel { Dock = DockStyle.Bottom, Height = 60, ColumnCount = 3, Padding = new Padding(18, 12, 10, 10), BackColor = CorFundoSuave };
@@ -243,10 +287,13 @@ public sealed class JanelaPrincipal : Form
     private Control MontarConexao()
     {
         var t = Grade();
+        Linha(t, "Nome da conexão", _nome, dica: "Como a conexão aparece aqui, no ícone perto do relógio e no log. Ex.: Produção, Homologação.");
         _url.PlaceholderText = "https://<endereço da IABS>";
-        Linha(t, "Endereço da IABS", _url, dica: "O mesmo endereço em que a IABS é usada no navegador. Aparece na tela da chave, na IABS.");
+        Linha(t, "Endereço da IABS", _url,
+            dica: "O mesmo endereço em que a IABS desta conexão é usada no navegador (o da produção ou o da homologação). Aparece na tela da chave, na IABS.");
         Linha(t, "Chave do integrador", ComSelo(_chave, _seloChave),
-            dica: "Na IABS: Governança → Configurações → Integrações → conexão \"Integrador IABS\" → Gerar chave. Aparece uma vez só.");
+            dica: "Na IABS: Governança → Configurações → Integrações → conexão \"Integrador IABS\" → Gerar chave. Aparece uma vez só. " +
+                  "Cada conexão usa a chave gerada no seu próprio ambiente da IABS.");
         var testar = Botao("Testar conexão");
         testar.Click += async (_, _) => await TestarIabsAsync();
         _botoesAcao.Add(testar);
@@ -292,11 +339,14 @@ public sealed class JanelaPrincipal : Form
         var t = Grade();
         _iniciarServico.Click += (_, _) => IniciarServico();
         Linha(t, "Serviço do Windows", Fluxo(_servicoEstado, _iniciarServico));
-        Linha(t, "Conexão com a IABS", _canal);
-        Linha(t, "Conexão na IABS", _conexaoIabs);
-        Linha(t, "Último pedido", _ultimoPedido);
-        Linha(t, "Pedidos atendidos", _pedidos, dica: "Desde que o serviço iniciou. O detalhe de cada pedido fica no log (sem dado de colaborador).");
-        Linha(t, "Lançar atestados", _lancamento);
+        _situacaoConexoes.Columns.Add("Conexão", 100);
+        _situacaoConexoes.Columns.Add("Situação", 185);
+        _situacaoConexoes.Columns.Add("Na IABS", 100);
+        _situacaoConexoes.Columns.Add("Último pedido", 90);
+        _situacaoConexoes.Columns.Add("Pedidos", 50);
+        _situacaoConexoes.Columns.Add("Lançar", 55);
+        Linha(t, "Conexões com a IABS", _situacaoConexoes,
+            dica: "Pedidos atendidos desde que o serviço iniciou. O detalhe de cada pedido fica no log (sem dado de colaborador).");
         Linha(t, "Pasta de dados", _pasta);
         // versão e atualização (2.1.0)
         _versaoInstalada.Text = Constantes.Versao;
@@ -319,11 +369,12 @@ public sealed class JanelaPrincipal : Form
     }
 
     // ---- configuração ----------------------------------------------------------------------
-    private void CarregarConfiguracao()
+    /// <summary>Lê o arquivo e mostra a conexão <paramref name="escolher"/> (ou a primeira).</summary>
+    private void CarregarConfiguracao(string? escolher = null)
     {
         try
         {
-            _atual = ConfiguracaoLocal.Carregar(_caminhos);
+            _arquivo = ConfiguracaoIntegrador.Carregar(_caminhos) ?? new ConfiguracaoIntegrador();
         }
         catch (UnauthorizedAccessException)
         {
@@ -335,31 +386,185 @@ public sealed class JanelaPrincipal : Form
             Status($"Não consegui ler a configuração atual: {ex.Message}", erro: true);
             return;
         }
-        if (_atual is null)
+        // sem nenhuma conexão gravada, a primeira nasce como "Produção"
+        _nova = _arquivo.Conexoes.Count == 0 ? ConfiguracaoLocal.NomePadrao : null;
+        var nome = _arquivo.Achar(escolher)?.Nome ?? _arquivo.Conexoes.FirstOrDefault()?.Nome ?? _nova!;
+        PreencherSeletor(nome);
+        MostrarConexao(nome);
+        Status(_arquivo.Conexoes.Count == 0
+            ? "Integrador ainda não configurado: preencha as abas 1 e 2 e clique em Salvar."
+            : $"Configuração carregada de {_caminhos.ArquivoConfig} ({(_arquivo.Conexoes.Count == 1 ? "1 conexão" : $"{_arquivo.Conexoes.Count} conexões")}).");
+    }
+
+    private void PreencherSeletor(string selecionar)
+    {
+        _preenchendo = true;
+        try
         {
-            Status("Integrador ainda não configurado: preencha as abas 1 e 2 e clique em Salvar.");
+            _conexao.Items.Clear();
+            foreach (var c in _arquivo.Conexoes) _conexao.Items.Add(c.Nome);
+            if (_nova is not null) _conexao.Items.Add(_nova);
+            _conexao.SelectedItem = selecionar;
+        }
+        finally
+        {
+            _preenchendo = false;
+        }
+    }
+
+    /// <summary>Mostra a conexão nas abas 1 e 2 (conexão nova: campos vazios, com a porta e o schema padrão).</summary>
+    private void MostrarConexao(string nome)
+    {
+        _selecionada = nome;
+        _atual = _arquivo.Achar(nome);
+        var c = _atual;
+        _nome.Text = nome;
+        _url.Text = c?.ApiUrl ?? "";
+        _chave.Text = "";
+        _chave.PlaceholderText = string.IsNullOrEmpty(c?.ChaveApiProtegida) ? "" : Definida;
+        _seloChave.Visible = !string.IsNullOrEmpty(c?.ChaveApiProtegida);
+
+        var b = c?.Banco;
+        _servidor.Text = b?.Servidor ?? "";
+        _porta.Text = b is null ? PortaPadrao : b.Porta?.ToString(CultureInfo.InvariantCulture) ?? "";
+        _nomeBanco.Text = b?.Banco ?? "";
+        _schema.Text = b?.Schema ?? "dbo";
+        _instancia.Text = b?.Instancia ?? "";
+        _usuario.Text = b?.Usuario ?? "";
+        _usuario.Enabled = _senha.Enabled = b?.AutenticacaoWindows != true;
+        _senha.Text = "";
+        _senha.PlaceholderText = string.IsNullOrEmpty(b?.SenhaProtegida) ? "" : Definida;
+        _seloSenha.Visible = !string.IsNullOrEmpty(b?.SenhaProtegida);
+        _gravacao.Checked = c?.GravacaoLiberada ?? false;
+        _confiarCertificado.Checked = b?.ConfiarCertificadoServidor ?? false;
+
+        // os resultados dos testes eram da conexão anterior
+        _resultadoIabs.Text = _resultadoBanco.Text = "";
+        _tabelas.Items.Clear();
+        _carregado = Assinatura();
+        AjustarBotoesDeConexao();
+    }
+
+    /// <summary>Os campos da tela, para saber se há alteração não salva (só em memória).</summary>
+    private string Assinatura() => JsonSerializer.Serialize(LerCampos());
+
+    private bool TemAlteracao() => _selecionada is not null && Assinatura() != _carregado;
+
+    /// <summary>Sem alteração, ou a pessoa aceitou descartar.</summary>
+    private bool PodeSairDaConexao() =>
+        !TemAlteracao()
+        || MessageBox.Show(this, $"A conexão \"{_selecionada}\" tem alterações que não foram salvas.\n\nDescartar as alterações?",
+            "Alterações não salvas", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+
+    private void TrocarConexao()
+    {
+        if (_conexao.SelectedItem is not string destino || destino == _selecionada) return;
+        if (!PodeSairDaConexao())
+        {
+            PreencherSeletor(_selecionada!);
             return;
         }
+        if (_nova is not null && _selecionada == _nova && _arquivo.Conexoes.Count > 0)
+        {
+            // a conexão nova que não foi salva sai da lista
+            _nova = null;
+            PreencherSeletor(destino);
+        }
+        MostrarConexao(destino);
+        Status($"Conexão \"{destino}\".");
+    }
 
-        _url.Text = _atual.ApiUrl;
-        _chave.Text = "";
-        _chave.PlaceholderText = string.IsNullOrEmpty(_atual.ChaveApiProtegida) ? "" : Definida;
-        _seloChave.Visible = !string.IsNullOrEmpty(_atual.ChaveApiProtegida);
+    private void NovaConexao()
+    {
+        if (!PodeSairDaConexao()) return;
+        var nome = PerguntarNome(_arquivo.Achar("Homologação") is null ? "Homologação" : "");
+        if (nome is null) return;
+        try
+        {
+            nome = ServicoConfiguracao.NomeValido(nome);
+            if (_arquivo.Achar(nome) is not null) throw new InvalidOperationException($"Já existe uma conexão \"{nome}\".");
+        }
+        catch (InvalidOperationException ex)
+        {
+            MessageBox.Show(this, ex.Message, "Nova conexão", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        _nova = nome;
+        PreencherSeletor(nome);
+        MostrarConexao(nome);
+        Status($"Conexão nova \"{nome}\": preencha as abas 1 e 2 com o endereço e a chave do ambiente da IABS e o banco do Senior dela, e clique em Salvar.");
+    }
 
-        var b = _atual.Banco;
-        _servidor.Text = b.Servidor;
-        _porta.Text = b.Porta?.ToString(CultureInfo.InvariantCulture) ?? "";
-        _nomeBanco.Text = b.Banco ?? "";
-        _schema.Text = b.Schema ?? "dbo";
-        _instancia.Text = b.Instancia ?? "";
-        _usuario.Text = b.Usuario ?? "";
-        _usuario.Enabled = _senha.Enabled = !b.AutenticacaoWindows;
-        _senha.Text = "";
-        _senha.PlaceholderText = string.IsNullOrEmpty(b.SenhaProtegida) ? "" : Definida;
-        _seloSenha.Visible = !string.IsNullOrEmpty(b.SenhaProtegida);
-        _gravacao.Checked = _atual.GravacaoLiberada;
-        _confiarCertificado.Checked = b.ConfiarCertificadoServidor;
-        Status($"Configuração carregada de {_caminhos.ArquivoConfig}.");
+    private string? PerguntarNome(string sugestao)
+    {
+        using var f = new Form
+        {
+            Text = "Nova conexão", FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
+            MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false, AutoScaleMode = AutoScaleMode.Dpi,
+            ClientSize = new Size(440, 160), BackColor = Color.White,
+        };
+        var corpo = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = new Padding(16, 14, 16, 4) };
+        corpo.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        corpo.Controls.Add(new Label
+        {
+            Text = "Nome da conexão (ex.: Homologação). Ela terá endereço da IABS, chave e banco do Senior próprios.",
+            AutoSize = true, MaximumSize = new Size(400, 0), Margin = new Padding(0, 0, 0, 8),
+        });
+        var campo = new TextBox { Text = sugestao, Anchor = AnchorStyles.Left | AnchorStyles.Right, MaxLength = 40 };
+        corpo.Controls.Add(campo);
+        var ok = Botao("Criar", destaque: true);
+        ok.DialogResult = DialogResult.OK;
+        var cancelar = Botao("Cancelar");
+        cancelar.DialogResult = DialogResult.Cancel;
+        var botoes = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, Height = 50, Padding = new Padding(12, 8, 6, 8), BackColor = CorFundoSuave };
+        botoes.Controls.AddRange([cancelar, ok]);
+        f.Controls.Add(corpo);
+        f.Controls.Add(botoes);
+        f.AcceptButton = ok;
+        f.CancelButton = cancelar;
+        return f.ShowDialog(this) == DialogResult.OK && !string.IsNullOrWhiteSpace(campo.Text) ? campo.Text : null;
+    }
+
+    private void RemoverConexao()
+    {
+        var nome = _selecionada;
+        if (nome is null) return;
+        if (nome == _nova)
+        {
+            // ainda não salva: só sai da lista
+            CarregarConfiguracao();
+            return;
+        }
+        if (_arquivo.Conexoes.Count <= 1) return;
+        var resposta = MessageBox.Show(this,
+            $"Remover a conexão \"{nome}\"?\n\nO serviço fecha o canal dela com a IABS em até 15 segundos, e o endereço, a chave e a senha do banco " +
+            "dela saem deste servidor. As outras conexões continuam.",
+            "Remover conexão", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (resposta != DialogResult.Yes) return;
+        try
+        {
+            var aviso = ServicoConfiguracao.Remover(nome, _caminhos);
+            CarregarConfiguracao();
+            AtualizarSituacao();
+            Status($"Conexão \"{nome}\" removida." + (aviso is null ? "" : $" {aviso}"));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            MessageBox.Show(this, SemAcesso, "Sem acesso", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or InvalidOperationException)
+        {
+            MessageBox.Show(this, $"Não consegui remover: {ex.Message}", "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>A única conexão gravada não sai; a nova, ainda não salva, sai quando há outra.</summary>
+    private void AjustarBotoesDeConexao()
+    {
+        _conexao.Enabled = _novaConexao.Enabled = !_ocupado;
+        _removerConexao.Enabled = !_ocupado && (_selecionada is not null && _selecionada == _nova
+            ? _arquivo.Conexoes.Count > 0
+            : _arquivo.Conexoes.Count > 1);
     }
 
     private static string? Nulo(string texto) => string.IsNullOrWhiteSpace(texto) ? null : texto.Trim();
@@ -371,8 +576,11 @@ public sealed class JanelaPrincipal : Form
     private EntradaConfiguracao LerCampos()
     {
         var windows = _atual?.Banco.AutenticacaoWindows ?? false;
+        // conexão nova: o proxy da máquina (o da primeira conexão)
+        var proxy = _atual?.Proxy ?? _arquivo.ProxyPrincipal;
         return new EntradaConfiguracao
         {
+            Nome = _nome.Text.Trim(),
             ApiUrl = _url.Text.Trim(),
             ChaveApi = _chave.Text.Trim(),
             Banco = new ConfiguracaoBanco
@@ -390,9 +598,9 @@ public sealed class JanelaPrincipal : Form
             SenhaBanco = _senha.Text,
             Proxy = new ConfiguracaoProxy
             {
-                Modo = _atual?.Proxy.Modo ?? "sistema",
-                Endereco = _atual?.Proxy.Endereco,
-                Usuario = _atual?.Proxy.Usuario,
+                Modo = proxy.Modo,
+                Endereco = proxy.Endereco,
+                Usuario = proxy.Usuario,
             },
             GravacaoLiberada = _gravacao.Checked,
         };
@@ -415,8 +623,11 @@ public sealed class JanelaPrincipal : Form
         var chave = !string.IsNullOrWhiteSpace(e.ChaveApi) ? Protetor.Proteger(e.ChaveApi) : _atual?.ChaveApiProtegida;
         if (string.IsNullOrEmpty(chave)) throw new InvalidOperationException("Informe a chave do integrador.");
         var proxy = e.Proxy!;
-        proxy.SenhaProtegida = _atual?.Proxy.SenhaProtegida;
-        return new ConfiguracaoLocal { ApiUrl = e.ApiUrl, ChaveApiProtegida = chave, Proxy = proxy, Banco = BancoParaTeste(), GravacaoLiberada = e.GravacaoLiberada };
+        proxy.SenhaProtegida = (_atual?.Proxy ?? _arquivo.ProxyPrincipal).SenhaProtegida;
+        return new ConfiguracaoLocal
+        {
+            Nome = e.Nome ?? "", ApiUrl = e.ApiUrl, ChaveApiProtegida = chave, Proxy = proxy, Banco = BancoParaTeste(), GravacaoLiberada = e.GravacaoLiberada,
+        };
     }
 
     private async Task<bool> TestarIabsAsync()
@@ -490,10 +701,13 @@ public sealed class JanelaPrincipal : Form
 
     private async Task SalvarAsync()
     {
+        var nomeAntes = _atual?.Nome; // nulo: conexão nova
         ConfiguracaoLocal cfg;
         try
         {
-            cfg = ServicoConfiguracao.Montar(_atual, LerCampos());
+            // conexão nova: parte do proxy da máquina (o da primeira conexão), com a senha cifrada
+            cfg = ServicoConfiguracao.Montar(_atual ?? ServicoConfiguracao.BaseDaNova(_arquivo), LerCampos());
+            ServicoConfiguracao.ConferirConflitos(_arquivo, cfg, nomeAntes);
         }
         catch (InvalidOperationException ex)
         {
@@ -518,20 +732,26 @@ public sealed class JanelaPrincipal : Form
 
         try
         {
-            var aviso = ServicoConfiguracao.Gravar(cfg, _caminhos);
-            CarregarConfiguracao();
+            var aviso = ServicoConfiguracao.Gravar(cfg, _caminhos, substitui: nomeAntes);
+            CarregarConfiguracao(cfg.Nome);
             AtualizarSituacao();
-            Status("Configuração gravada.");
+            Status($"Conexão \"{cfg.Nome}\" gravada.");
             MessageBox.Show(this,
-                "Configuração gravada.\n\nO serviço se conecta à IABS em até 15 segundos. Acompanhe na aba Situação."
+                $"Conexão \"{cfg.Nome}\" gravada.\n\nO serviço se conecta à IABS em até 15 segundos. Acompanhe na aba Situação."
+                + (_arquivo.Conexoes.Count > 1 ? "\n\nAs outras conexões continuam conectadas." : "")
                 + (aviso is null ? "" : $"\n\n{aviso}"),
                 "Integrador IABS", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // outra janela gravou uma conexão com o mesmo nome ou a mesma chave no meio
+            MessageBox.Show(this, ex.Message, "Configuração não gravada", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         catch (UnauthorizedAccessException)
         {
             MessageBox.Show(this, SemAcesso, "Sem acesso", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or JsonException)
         {
             MessageBox.Show(this, $"Não consegui gravar: {ex.Message}", "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
@@ -577,30 +797,44 @@ public sealed class JanelaPrincipal : Form
                 Mostrar(_situacaoAtualizacao, false, "Última tentativa: " + TextoDaAtualizacao(a));
             }
         }
+        // uma linha por conexão gravada (2.2.0), com o que o serviço gravou no status.json
         var st = StatusPainel.Ler(_caminhos);
-        if (st is null || !st.Configurado)
+        _situacaoConexoes.BeginUpdate();
+        try
         {
-            _canal.Text = _atual is null ? "depois de salvar a configuração" : "aguardando o serviço";
-            _canal.ForeColor = CorSecundaria;
-            _conexaoIabs.Text = _ultimoPedido.Text = _pedidos.Text = "—";
-            _lancamento.Text = _atual?.GravacaoLiberada == true ? "liberado" : "desligado (a IABS só lê)";
-            return;
+            _situacaoConexoes.Items.Clear();
+            if (_arquivo.Conexoes.Count == 0)
+            {
+                var vazio = new ListViewItem("—") { ForeColor = CorSecundaria };
+                vazio.SubItems.Add("depois de salvar a configuração");
+                _situacaoConexoes.Items.Add(vazio);
+            }
+            foreach (var c in _arquivo.Conexoes)
+            {
+                var s = st?.Lista.FirstOrDefault(x => ConfiguracaoIntegrador.MesmoNome(x.Nome, c.Nome));
+                var (texto, cor) = SituacaoDaConexao(s);
+                var item = new ListViewItem(c.Nome) { ForeColor = cor, ToolTipText = texto };
+                item.SubItems.Add(texto);
+                item.SubItems.Add(s?.ConexaoIabs ?? "—");
+                item.SubItems.Add(s is null ? "—" : s.UltimoPedidoEm is { } p ? p.LocalDateTime.ToString("dd/MM HH:mm:ss", CultureInfo.CurrentCulture) : "nenhum ainda");
+                item.SubItems.Add(s is null ? "—" : s.Pedidos.ToString("N0", CultureInfo.CurrentCulture));
+                item.SubItems.Add(c.GravacaoLiberada ? "liberado" : "só lê");
+                _situacaoConexoes.Items.Add(item);
+            }
         }
-        if (st.Conectado)
+        finally
         {
-            _canal.Text = $"● Conectado desde {st.ConectadoDesde?.LocalDateTime:dd/MM/yyyy HH:mm}";
-            _canal.ForeColor = CorOk;
+            _situacaoConexoes.EndUpdate();
         }
-        else
-        {
-            var desde = st.DesconectadoDesde is { } d ? $" desde {d.LocalDateTime:dd/MM/yyyy HH:mm}" : "";
-            _canal.Text = $"● Desconectado{desde}. {st.Mensagem}";
-            _canal.ForeColor = st.DesconectadoDesde is { } d2 && DateTimeOffset.Now - d2 > TimeSpan.FromMinutes(2) ? CorErro : CorAtencao;
-        }
-        _conexaoIabs.Text = st.ConexaoIabs ?? "—";
-        _ultimoPedido.Text = st.UltimoPedidoEm is { } p ? p.LocalDateTime.ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.CurrentCulture) : "nenhum ainda";
-        _pedidos.Text = st.Pedidos.ToString("N0", CultureInfo.CurrentCulture);
-        _lancamento.Text = st.GravacaoLiberada ? "liberado" : "desligado (a IABS só lê)";
+    }
+
+    private static (string Texto, Color Cor) SituacaoDaConexao(StatusConexao? s)
+    {
+        if (s is null) return ("aguardando o serviço", CorSecundaria);
+        if (s.Conectado) return ($"● Conectado desde {s.ConectadoDesde?.LocalDateTime:dd/MM/yyyy HH:mm}", CorOk);
+        var desde = s.DesconectadoDesde is { } d ? $" desde {d.LocalDateTime:dd/MM/yyyy HH:mm}" : "";
+        var longa = s.DesconectadoDesde is { } d2 && DateTimeOffset.Now - d2 > TimeSpan.FromMinutes(2);
+        return ($"● Desconectado{desde}. {s.Mensagem}", longa ? CorErro : CorAtencao);
     }
 
     // ---- atualização (2.1.0) ------------------------------------------------------------------
@@ -611,7 +845,7 @@ public sealed class JanelaPrincipal : Form
         _disponivel = null;
         try
         {
-            var proxy = _atual?.Proxy ?? new ConfiguracaoProxy();
+            var proxy = _arquivo.ProxyPrincipal;
             var v = await Task.Run(() => VerificadorAtualizacao.UltimaVersaoAsync(proxy, CancellationToken.None));
             if (v is null)
             {
@@ -730,7 +964,9 @@ public sealed class JanelaPrincipal : Form
     private void Ocupado(bool ocupado, string? mensagem = null)
     {
         UseWaitCursor = ocupado;
+        _ocupado = ocupado;
         foreach (var b in _botoesAcao) b.Enabled = !ocupado;
+        AjustarBotoesDeConexao();
         if (mensagem is not null) Status(mensagem);
     }
 

@@ -68,7 +68,7 @@ public sealed class JanelaConfiguracaoTestes : IDisposable
             Proxy = new ConfiguracaoProxy { Modo = "manual", Endereco = "http://proxy.teste.local:8080" },
             GravacaoLiberada = true,
         });
-        cfg.Salvar(caminhos);
+        new ConfiguracaoIntegrador { Conexoes = [cfg] }.Salvar(caminhos);
 
         EmThreadSta(() =>
         {
@@ -76,7 +76,7 @@ public sealed class JanelaConfiguracaoTestes : IDisposable
             janela.Show(); // OnLoad: carrega a configuração
             Application.DoEvents();
             // o Salvar recarrega a configuração depois de gravar
-            typeof(JanelaPrincipal).GetMethod("CarregarConfiguracao", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(janela, null);
+            typeof(JanelaPrincipal).GetMethod("CarregarConfiguracao", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(janela, [null]);
             // e a leitura dos campos preserva o proxy gravado, que não está na tela
             var entrada = (EntradaConfiguracao)typeof(JanelaPrincipal).GetMethod("LerCampos", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(janela, null)!;
             Assert.Equal("manual", entrada.Proxy!.Modo);
@@ -84,6 +84,51 @@ public sealed class JanelaConfiguracaoTestes : IDisposable
             Assert.Equal("iabs_agente", entrada.Banco.Usuario);
             // e a liberação do lançamento volta marcada
             Assert.True(entrada.GravacaoLiberada);
+            Assert.Equal("Produção", entrada.Nome);
+            // a única conexão não pode ser removida
+            Assert.False(Campo<Button>(janela, "_removerConexao").Enabled);
+            janela.Close();
+        });
+    }
+
+    private static T Campo<T>(JanelaPrincipal janela, string nome) =>
+        (T)typeof(JanelaPrincipal).GetField(nome, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(janela)!;
+
+    /// <summary>2.2.0: o seletor no topo troca a conexão das abas 1 e 2.</summary>
+    [Fact]
+    public void Seletor_troca_a_conexao_das_abas()
+    {
+        var caminhos = Caminhos.Resolver(_pasta);
+        ConfiguracaoLocal Conexao(string? nome, string url, string servidor, string chave) => ServicoConfiguracao.Montar(null, new EntradaConfiguracao
+        {
+            Nome = nome,
+            ApiUrl = url,
+            ChaveApi = chave,
+            Banco = new ConfiguracaoBanco { Servidor = servidor, Banco = "SENIOR", Usuario = "iabs_agente" },
+            SenhaBanco = "senha-teste",
+        });
+        new ConfiguracaoIntegrador
+        {
+            Conexoes = [Conexao(null, "https://app.iabs.teste", "srv-prod", "chave-prod"), Conexao("Homologação", "https://hml.iabs.teste", "srv-hml", "chave-hml")],
+        }.Salvar(caminhos);
+
+        EmThreadSta(() =>
+        {
+            using var janela = new JanelaPrincipal(caminhos) { ShowInTaskbar = false };
+            janela.Show();
+            Application.DoEvents();
+            var seletor = Campo<ComboBox>(janela, "_conexao");
+            Assert.Equal(["Produção", "Homologação"], seletor.Items.Cast<string>());
+            Assert.Equal("srv-prod", Campo<TextBox>(janela, "_servidor").Text);
+
+            // sem alteração na tela: troca sem perguntar
+            seletor.SelectedItem = "Homologação";
+            Assert.Equal("srv-hml", Campo<TextBox>(janela, "_servidor").Text);
+            Assert.Equal("https://hml.iabs.teste", Campo<TextBox>(janela, "_url").Text);
+            Assert.Equal("Homologação", Campo<TextBox>(janela, "_nome").Text);
+            Assert.True(Campo<Button>(janela, "_removerConexao").Enabled);
+            // a situação tem uma linha por conexão
+            Assert.Equal(2, Campo<ListView>(janela, "_situacaoConexoes").Items.Count);
             janela.Close();
         });
     }

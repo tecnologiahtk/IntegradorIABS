@@ -15,10 +15,17 @@ public sealed class IconeBandejaTestes : IDisposable
     }
 
     private static StatusAgente Status(bool conectado = true, bool configurado = true, int minutosAtras = 0, int foraHaMinutos = 0, string? mensagem = null) => new(
-        "2.0.0", Agora.AddMinutes(-minutosAtras), configurado, conectado,
+        "2.0.0", Agora.AddMinutes(-minutosAtras),
+        configurado ? [Conexao("Produção", conectado, foraHaMinutos, mensagem)] : [],
+        null);
+
+    private static StatusConexao Conexao(string nome, bool conectado = true, int foraHaMinutos = 0, string? mensagem = null) => new(
+        nome, conectado,
         conectado ? Agora.AddHours(-1) : null,
         conectado ? null : Agora.AddMinutes(-foraHaMinutos),
         Agora.AddMinutes(-3), 42, "Cliente HML", true, mensagem);
+
+    private static StatusAgente Duas(StatusConexao producao, StatusConexao homologacao) => new("2.2.0", Agora, [producao, homologacao], null);
 
     [Fact]
     public void Verde_quando_conectado()
@@ -56,9 +63,52 @@ public sealed class IconeBandejaTestes : IDisposable
     public void Status_gravado_e_lido_de_volta()
     {
         var caminhos = Caminhos.Resolver(_pasta);
-        var status = Status();
+        var status = Duas(Conexao("Produção"), Conexao("Homologação", conectado: false, foraHaMinutos: 5, mensagem: "Conectando à IABS..."));
         StatusPainel.Gravar(caminhos, status);
-        Assert.Equal(status, StatusPainel.Ler(caminhos));
+        var lido = StatusPainel.Ler(caminhos)!;
+        Assert.Equal(status.Versao, lido.Versao);
+        Assert.Equal(status.AtualizadoEm, lido.AtualizadoEm);
+        Assert.Equal(status.Lista, lido.Lista);
+    }
+
+    [Fact]
+    public void Duas_conexoes_ok_e_verde_com_uma_linha_por_conexao()
+    {
+        var a = CalculoAparencia.Calcular(Duas(Conexao("Produção"), Conexao("Homologação")), "Running", Agora);
+        Assert.Equal(Nivel.Ok, a.Nivel);
+        Assert.Equal("conectado à IABS (2 conexões)", a.Titulo);
+        Assert.Equal(2, a.Linhas.Count);
+        Assert.StartsWith("Produção: conectado desde 26/11", a.Linhas[0], StringComparison.Ordinal);
+        Assert.StartsWith("Homologação: conectado desde 26/11", a.Linhas[1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Homologacao_fora_ha_muito_tempo_deixa_vermelho_e_diz_qual()
+    {
+        var a = CalculoAparencia.Calcular(
+            Duas(Conexao("Produção"), Conexao("Homologação", conectado: false, foraHaMinutos: 12, mensagem: "A IABS recusou a chave do integrador.")),
+            "Running", Agora);
+        Assert.Equal(Nivel.Erro, a.Nivel);
+        Assert.Equal("sem conexão com a IABS (Homologação)", a.Titulo);
+        Assert.Equal("Homologação: sem conexão há 12 min. A IABS recusou a chave do integrador.", a.Linhas[1]);
+        Assert.True(a.Dica.Length <= 127);
+    }
+
+    [Fact]
+    public void Queda_curta_numa_das_conexoes_e_amarela() =>
+        Assert.Equal("conectando à IABS (Homologação)",
+            CalculoAparencia.Calcular(Duas(Conexao("Produção"), Conexao("Homologação", conectado: false, foraHaMinutos: 1)), "Running", Agora).Titulo);
+
+    [Fact]
+    public void Status_da_2_1_sem_a_lista_aguarda_o_servico_novo()
+    {
+        var caminhos = Caminhos.Resolver(_pasta);
+        Directory.CreateDirectory(_pasta);
+        File.WriteAllText(StatusPainel.Arquivo(caminhos),
+            """{"versao":"2.1.4","atualizadoEm":"2026-11-26T10:00:00-03:00","configurado":true,"conectado":true,"pedidos":3,"gravacaoLiberada":true}""");
+        var lido = StatusPainel.Ler(caminhos)!;
+        Assert.False(lido.Configurado);
+        Assert.Equal(Nivel.Atencao, CalculoAparencia.Calcular(lido, "Running", Agora).Nivel);
     }
 
     [Fact]

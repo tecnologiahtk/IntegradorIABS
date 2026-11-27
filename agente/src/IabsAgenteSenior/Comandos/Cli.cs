@@ -26,11 +26,16 @@ public static class Cli
 
         Comandos:
           configurar        Assistente de configuração (como administrador). Testa o banco e a IABS antes de gravar.
+                              --conexao <nome>         a conexão a configurar (ex.: Produção, Homologação); nome novo
+                                                       cria outra conexão, com endereço, chave e banco próprios
                               --arquivo <config.json>  configuração em arquivo (instalação silenciosa); o arquivo é apagado
                               --forcar                 grava mesmo se o teste do banco ou da IABS falhar
+          conexoes          Lista as conexões configuradas.
+          remover-conexao   Remove uma conexão (--conexao <nome>). As outras continuam.
           requisitos        Confere os requisitos da máquina.
           testar-banco      Testa a conexão com o banco, a leitura de cada tabela e a permissão na r038afa.
           testar-iabs       Testa o canal com a IABS (valida a chave e fecha, sem derrubar o serviço).
+                            Os dois testam todas as conexões, ou só a de --conexao <nome>.
           diagnostico       Gera um pacote .zip para o suporte da IABS, sem dado de colaborador.
           servico           Roda o serviço neste console (para teste).
           atualizador       Roda o atualizador uma vez (como administrador): instala o pedido deixado pela IABS,
@@ -62,8 +67,10 @@ public static class Cli
                 "versao" or "--version" => Escrever($"{Constantes.NomeExibicao} {Constantes.Versao} (protocolo {Constantes.Protocolo})"),
                 "requisitos" => MostrarRequisitos(caminhos),
                 "configurar" => await ConfigurarAsync(caminhos, opcoes),
-                "testar-banco" => await TestarBancoAsync(CarregarConfig(caminhos), caminhos),
-                "testar-iabs" => await TestarIabsAsync(CarregarConfig(caminhos), caminhos),
+                "conexoes" => ListarConexoes(caminhos),
+                "remover-conexao" => RemoverConexao(caminhos, opcoes),
+                "testar-banco" => await TestarConexoesAsync(caminhos, opcoes, TestarBancoAsync),
+                "testar-iabs" => await TestarConexoesAsync(caminhos, opcoes, TestarIabsAsync),
                 "diagnostico" => Escrever($"Pacote gerado: {PacoteDiagnostico.Gerar(caminhos)}"),
                 "servico" => await RodarServicoAsync(caminhos, console: true),
                 "atualizador" => await RodarAtualizadorAsync(caminhos),
@@ -90,9 +97,53 @@ public static class Cli
     private static ILogger Logger(Caminhos caminhos) =>
         LoggerFactory.Create(b => b.AddProvider(new ArquivoLoggerProvider(caminhos.PastaLogs))).CreateLogger("Cli");
 
-    private static ConfiguracaoLocal CarregarConfig(Caminhos caminhos) =>
-        ConfiguracaoLocal.Carregar(caminhos)
-        ?? throw new InvalidOperationException($"Integrador sem configuração em {caminhos.ArquivoConfig}. Rode: IabsAgenteSenior.exe configurar");
+    private static ConfiguracaoIntegrador CarregarConfig(Caminhos caminhos) =>
+        ConfiguracaoIntegrador.Carregar(caminhos) is { Conexoes.Count: > 0 } arquivo
+            ? arquivo
+            : throw new InvalidOperationException($"Integrador sem configuração em {caminhos.ArquivoConfig}. Rode: IabsAgenteSenior.exe configurar");
+
+    private static string Nomes(ConfiguracaoIntegrador arquivo) => string.Join(", ", arquivo.Conexoes.Select(c => c.Nome));
+
+    /// <summary>Todas as conexões, ou só a de --conexao.</summary>
+    private static IReadOnlyList<ConfiguracaoLocal> ConexoesPedidas(Caminhos caminhos, Opcoes opcoes)
+    {
+        var arquivo = CarregarConfig(caminhos);
+        var nome = opcoes.Valor("--conexao");
+        if (nome is null) return arquivo.Conexoes;
+        return [arquivo.Achar(nome) ?? throw new InvalidOperationException($"Não há conexão \"{nome}\". Conexões: {Nomes(arquivo)}.")];
+    }
+
+    // ---- conexões (2.2.0) -----------------------------------------------------------------
+    private static int ListarConexoes(Caminhos caminhos)
+    {
+        foreach (var c in CarregarConfig(caminhos).Conexoes)
+        {
+            var banco = c.Banco.Porta is { } porta ? $"{c.Banco.Servidor},{porta}" : string.IsNullOrEmpty(c.Banco.Instancia) ? c.Banco.Servidor : $"{c.Banco.Servidor}\\{c.Banco.Instancia}";
+            Console.WriteLine($"  {c.Nome}: IABS {c.ApiUrl} | banco {c.Banco.Banco} em {banco} | lançar atestados: {(c.GravacaoLiberada ? "liberado" : "desligado")}");
+        }
+        return 0;
+    }
+
+    private static int RemoverConexao(Caminhos caminhos, Opcoes opcoes)
+    {
+        var pedido = opcoes.Valor("--conexao") ?? throw new InvalidOperationException("Informe a conexão: remover-conexao --conexao <nome>.");
+        var nome = CarregarConfig(caminhos).Achar(pedido)?.Nome ?? pedido;
+        var aviso = ServicoConfiguracao.Remover(nome, caminhos);
+        Console.WriteLine($"Conexão \"{nome}\" removida. O serviço fecha o canal dela com a IABS em até 15 segundos; as outras continuam.");
+        if (aviso is not null) Console.WriteLine(aviso);
+        return 0;
+    }
+
+    private static async Task<int> TestarConexoesAsync(Caminhos caminhos, Opcoes opcoes, Func<ConfiguracaoLocal, Caminhos, Task<int>> testar)
+    {
+        var resultado = 0;
+        foreach (var c in ConexoesPedidas(caminhos, opcoes))
+        {
+            Console.WriteLine($"Conexão \"{c.Nome}\":");
+            resultado |= await testar(c, caminhos);
+        }
+        return resultado;
+    }
 
     // ---- serviço ----------------------------------------------------------------------
     private static async Task<int> RodarServicoAsync(Caminhos caminhos, bool console)
@@ -147,10 +198,27 @@ public static class Cli
     // ---- configurar ---------------------------------------------------------------------------
     private static async Task<int> ConfigurarAsync(Caminhos caminhos, Opcoes opcoes)
     {
-        var arquivo = opcoes.Valor("--arquivo");
-        var entrada = arquivo is not null ? LerEntrada(arquivo) : PerguntarEntrada(ConfiguracaoLocal.Carregar(caminhos));
+        var arquivo = ConfiguracaoIntegrador.Carregar(caminhos);
+        var caminhoEntrada = opcoes.Valor("--arquivo");
+        EntradaConfiguracao entrada;
+        ConfiguracaoLocal? atual;
+        if (caminhoEntrada is not null)
+        {
+            entrada = LerEntrada(caminhoEntrada);
+            entrada.Nome = opcoes.Valor("--conexao") ?? entrada.Nome;
+            atual = EscolherConexao(arquivo, entrada.Nome);
+        }
+        else
+        {
+            var nome = opcoes.Valor("--conexao") ?? PerguntarConexao(arquivo);
+            atual = EscolherConexao(arquivo, nome);
+            entrada = PerguntarEntrada(atual, arquivo?.ProxyPrincipal);
+            entrada.Nome = nome;
+        }
 
-        var cfg = ServicoConfiguracao.Montar(ConfiguracaoLocal.Carregar(caminhos), entrada);
+        // conexão nova: parte do proxy da máquina (o da primeira conexão)
+        var cfg = ServicoConfiguracao.Montar(atual ?? ServicoConfiguracao.BaseDaNova(arquivo), entrada);
+        ServicoConfiguracao.ConferirConflitos(arquivo, cfg, atual?.Nome);
 
         Console.WriteLine("Testando o banco do Senior...");
         var bancoOk = await TestarBancoAsync(cfg, caminhos) == 0;
@@ -162,10 +230,28 @@ public static class Cli
             return 1;
         }
 
-        var aviso = ServicoConfiguracao.Gravar(cfg, caminhos);
-        Console.WriteLine($"Configuração gravada em {caminhos.ArquivoConfig}. O serviço se conecta à IABS em até 15 segundos.");
+        var aviso = ServicoConfiguracao.Gravar(cfg, caminhos, substitui: atual?.Nome);
+        Console.WriteLine($"Conexão \"{cfg.Nome}\" gravada em {caminhos.ArquivoConfig}. O serviço se conecta à IABS em até 15 segundos.");
         if (aviso is not null) Console.WriteLine(aviso);
         return 0;
+    }
+
+    /// <summary>
+    /// Nome informado: a conexão com esse nome (nula se for nova). Sem nome: a
+    /// única que existe; com várias, é preciso dizer qual.
+    /// </summary>
+    private static ConfiguracaoLocal? EscolherConexao(ConfiguracaoIntegrador? arquivo, string? nome)
+    {
+        if (!string.IsNullOrWhiteSpace(nome)) return arquivo?.Achar(nome);
+        if (arquivo is null || arquivo.Conexoes.Count == 0) return null;
+        if (arquivo.Conexoes.Count == 1) return arquivo.Conexoes[0];
+        throw new InvalidOperationException($"Há {arquivo.Conexoes.Count} conexões ({Nomes(arquivo)}): informe qual com --conexao <nome>.");
+    }
+
+    private static string? PerguntarConexao(ConfiguracaoIntegrador? arquivo)
+    {
+        if (arquivo is null || arquivo.Conexoes.Count == 0) return null; // a primeira: "Produção"
+        return Perguntar($"Conexão a configurar ({Nomes(arquivo)}; outro nome cria uma conexão nova)", arquivo.Conexoes[0].Nome);
     }
 
     private static EntradaConfiguracao LerEntrada(string arquivo)
@@ -177,15 +263,15 @@ public static class Cli
         return entrada;
     }
 
-    private static EntradaConfiguracao PerguntarEntrada(ConfiguracaoLocal? atual)
+    private static EntradaConfiguracao PerguntarEntrada(ConfiguracaoLocal? atual, ConfiguracaoProxy? proxyDaMaquina)
     {
         Console.WriteLine("Configuração do Integrador IABS (Enter mantém o valor entre colchetes).");
         foreach (var r in Requisitos.Verificar(Caminhos.PastaPadrao).Where(r => !r.Ok)) Console.WriteLine($"[AVISO] Requisito: {r.Nome} ({r.Detalhe})");
         var e = new EntradaConfiguracao
         {
             ApiUrl = Perguntar("Endereço da IABS", atual?.ApiUrl),
-            ChaveApi = PerguntarSegredo("Chave do integrador (Enter mantém a atual)"),
-            Proxy = atual?.Proxy,
+            ChaveApi = PerguntarSegredo(atual is null ? "Chave do integrador (gerada no ambiente da IABS desta conexão)" : "Chave do integrador (Enter mantém a atual)"),
+            Proxy = atual?.Proxy ?? proxyDaMaquina,
         };
         var b = new ConfiguracaoBanco
         {
