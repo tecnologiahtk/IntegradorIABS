@@ -19,6 +19,60 @@ public sealed class PastaDadosTestes : IDisposable
         if (Directory.Exists(_pasta)) Directory.Delete(_pasta, recursive: true);
     }
 
+    /// <summary>2.2.1: arquivo sem nenhuma permissão herdada (o estrago do afastamento que falhava) é achado.</summary>
+    [Fact]
+    public void Arquivo_sem_heranca_e_achado()
+    {
+        Directory.CreateDirectory(_pasta);
+        var arquivo = Path.Combine(_pasta, "config.json");
+        File.WriteAllText(arquivo, "{}");
+        Assert.False(PastaDados.SemHeranca(arquivo, ehPasta: false));
+
+        // o dono tira a herança e não deixa permissão nenhuma, como ficou o config.json
+        var info = new FileInfo(arquivo);
+        var fechada = new System.Security.AccessControl.FileSecurity();
+        fechada.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        info.SetAccessControl(fechada);
+        Assert.True(PastaDados.SemHeranca(arquivo, ehPasta: false));
+
+        // devolve a herança para o Dispose apagar
+        var heranca = new System.Security.AccessControl.FileSecurity();
+        heranca.SetAccessRuleProtection(isProtected: false, preserveInheritance: false);
+        info.SetAccessControl(heranca);
+        Assert.False(PastaDados.SemHeranca(arquivo, ehPasta: false));
+    }
+
+    /// <summary>Sem administrador, o conserto só avisa e não para nada.</summary>
+    [Fact]
+    public void Conserto_sem_privilegio_avisa_e_nao_falha()
+    {
+        Directory.CreateDirectory(_pasta);
+        File.WriteAllText(Path.Combine(_pasta, "config.json"), "{}");
+        var mensagens = PastaDados.RepararHeranca(_pasta);
+        Assert.True(mensagens.Count == 0 || mensagens.All(m => m.StartsWith("AVISO", StringComparison.Ordinal) || m.StartsWith("Permissões", StringComparison.Ordinal)));
+    }
+
+    /// <summary>2.2.1: o que o atualizador da 2.1.3 deixou na pasta de dados sai na instalação; o resto fica.</summary>
+    [Fact]
+    public void Restos_da_atualizacao_antiga_saem_e_o_resto_fica()
+    {
+        Directory.CreateDirectory(Path.Combine(_pasta, "atualizacao"));
+        File.WriteAllText(Path.Combine(_pasta, "atualizacao", "IntegradorIABS-2.1.3.msi"), "msi antigo");
+        File.WriteAllText(Path.Combine(_pasta, "atualizacao.json"), "{}");
+        File.WriteAllText(Path.Combine(_pasta, "config.json"), "{}");
+        File.WriteAllText(Path.Combine(_pasta, "atualizar.json"), "{}");
+
+        var mensagens = PastaDados.LimparRestosDaAtualizacaoAntiga(_pasta);
+
+        Assert.Equal(2, mensagens.Count);
+        Assert.False(File.Exists(Path.Combine(_pasta, "atualizacao.json")));
+        Assert.False(Directory.Exists(Path.Combine(_pasta, "atualizacao")));
+        Assert.True(File.Exists(Path.Combine(_pasta, "config.json")));
+        Assert.True(File.Exists(Path.Combine(_pasta, "atualizar.json")));
+        // sem restos: nada a dizer
+        Assert.Empty(PastaDados.LimparRestosDaAtualizacaoAntiga(_pasta));
+    }
+
     [Fact]
     public void Protege_e_mantem_quem_foi_liberado()
     {

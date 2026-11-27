@@ -33,12 +33,15 @@ public static class VerificadorAtualizacao
         return new VersaoPublicada(versao!, sha);
     }
 
-    /// <summary>Deixa o pedido e liga o atualizador (quem instalou tem a permissão de ligá-lo).</summary>
-    public static void PedirAgora(Caminhos caminhos, VersaoPublicada v)
+    /// <summary>
+    /// Botão Atualizar da janela (2.2.1): só liga o atualizador, sem gravar nada
+    /// na pasta de dados. Ligado sem pedido, ele mesmo pega no GitHub a última
+    /// versão e o SHA-256 dela. O instalador deixa qualquer usuário logado
+    /// ligá-lo (só ligar: parar e configurar continuam com administradores).
+    /// </summary>
+    public static void LigarAtualizador(VersaoPublicada v)
     {
         if (!RegrasAtualizacao.MaisNova(v.Versao, Constantes.Versao)) throw new InvalidOperationException("A versão instalada já é a mais nova.");
-        ArquivosAtualizacao.GravarPedido(caminhos, new PedidoAtualizacao(v.Versao, v.Sha256, DateTimeOffset.Now));
-        ArquivosAtualizacao.GravarSituacao(caminhos, new SituacaoAtualizacao(v.Versao, "PEDIDA", null, DateTimeOffset.Now));
         using var sc = new ServiceController(Constantes.NomeServicoAtualizador);
         if (sc.Status == ServiceControllerStatus.Stopped) sc.Start();
     }

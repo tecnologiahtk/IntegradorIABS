@@ -4,7 +4,7 @@
        dotnet publish ..\src\IabsAgenteSenior -c Release -o ..\publicar\app -->
   <PropertyGroup>
     <!-- manter igual ao <Version> do Directory.Build.props -->
-    <Versao Condition="'$(Versao)' == ''">2.2.0</Versao>
+    <Versao Condition="'$(Versao)' == ''">2.2.1</Versao>
     <OutputName>IntegradorIABS-$(Versao)</OutputName>
     <InstallerPlatform>x64</InstallerPlatform>
     <Publicar>$(MSBuildProjectDirectory)\..\publicar\app</Publicar>

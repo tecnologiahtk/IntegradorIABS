@@ -106,6 +106,8 @@ public sealed class JanelaPrincipal : Form
     private readonly Label _situacaoAtualizacao = Resultado();
     private readonly System.Windows.Forms.Timer _acompanharAtualizacao = new() { Interval = 2_000 };
     private VersaoPublicada? _disponivel;
+    private DateTimeOffset _atualizadorLigadoEm;
+    private int _esperasDaAtualizacao;
 
     // rodapé
     private readonly Label _status = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = CorSecundaria, AutoEllipsis = true };
@@ -884,17 +886,20 @@ public sealed class JanelaPrincipal : Form
         if (resposta != DialogResult.Yes) return;
         try
         {
-            VerificadorAtualizacao.PedirAgora(_caminhos, _disponivel);
+            // 2.2.1: a janela só liga o atualizador (qualquer usuário logado pode); ele confere tudo sozinho
+            _atualizadorLigadoEm = DateTimeOffset.Now.AddSeconds(-2);
+            VerificadorAtualizacao.LigarAtualizador(_disponivel);
             _atualizarAgora.Visible = false;
+            _esperasDaAtualizacao = 0;
+            Mostrar(_situacaoAtualizacao, true, $"Atualizador ligado: conferindo a versão {_disponivel.Versao} no GitHub...");
             _acompanharAtualizacao.Tick -= AcompanharAtualizacao;
             _acompanharAtualizacao.Tick += AcompanharAtualizacao;
             _acompanharAtualizacao.Start();
-            AcompanharAtualizacao(null, EventArgs.Empty);
         }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
-            Mostrar(_situacaoAtualizacao, false, ex is UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException { InnerException: System.ComponentModel.Win32Exception }
-                ? "Este usuário do Windows não pode ligar o atualizador. Use quem instalou, ou rode o instalador novo como administrador."
+            Mostrar(_situacaoAtualizacao, false, ex is System.ComponentModel.Win32Exception or InvalidOperationException { InnerException: System.ComponentModel.Win32Exception }
+                ? "Não consegui ligar o atualizador. Rode o instalador novo uma vez como administrador: ele libera o botão para todos os usuários."
                 : ex.Message);
         }
     }
@@ -902,7 +907,15 @@ public sealed class JanelaPrincipal : Form
     private void AcompanharAtualizacao(object? sender, EventArgs e)
     {
         var s = ArquivosAtualizacao.LerSituacao(_caminhos);
-        if (s is null) return;
+        // só conta o que o atualizador gravou depois de ligado
+        if (s is null || s.Em < _atualizadorLigadoEm)
+        {
+            if (++_esperasDaAtualizacao < 45) return;
+            _acompanharAtualizacao.Stop();
+            Mostrar(_situacaoAtualizacao, false,
+                $"O atualizador não deu notícia em 90 segundos: nada foi instalado. Veja o log dele em {Path.Combine(AreaDoSistema.PastaDoSystem, "logs")} (só administradores abrem).");
+            return;
+        }
         var texto = TextoDaAtualizacao(s);
         Mostrar(_situacaoAtualizacao, s.Situacao != "ERRO", texto);
         if (s.Situacao == "ERRO") _acompanharAtualizacao.Stop();

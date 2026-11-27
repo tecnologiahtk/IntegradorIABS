@@ -110,7 +110,15 @@ public sealed class ServicoAgente(Caminhos caminhos, ILoggerFactory fabrica) : B
             lock (_travaAtualizacao)
             {
                 ArquivosAtualizacao.GravarPedido(caminhos, pedido);
-                ArquivosAtualizacao.GravarSituacao(caminhos, new SituacaoAtualizacao(pedido.Versao, "PEDIDA", null, DateTimeOffset.Now));
+                try
+                {
+                    ArquivosAtualizacao.GravarSituacao(caminhos, new SituacaoAtualizacao(pedido.Versao, "PEDIDA", null, DateTimeOffset.Now));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // a situação "PEDIDA" é só para a tela (ex.: atualizacao.json preso da 2.1.3); o pedido segue
+                    _logger.LogDebug("Situação PEDIDA não gravada ({Tipo}).", ex.GetType().Name);
+                }
                 using var sc = new ServiceController(Constantes.NomeServicoAtualizador);
                 if (sc.Status == ServiceControllerStatus.Stopped) sc.Start();
             }

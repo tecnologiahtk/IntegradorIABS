@@ -50,8 +50,13 @@ public sealed class AtualizadorTestes : IDisposable
         if (Directory.Exists(_pastaDoSistema)) Directory.Delete(_pastaDoSistema, recursive: true);
     }
 
-    /// <summary>Um GitHub falso: API da versão, página do download (302) e o armazenamento.</summary>
-    private sealed class GitHubFalso(string shaNaApi, byte[] arquivo, string destinoDoRedirecionamento) : HttpMessageHandler
+    private static readonly string ApiDaUltima = $"https://api.github.com/repos/{Constantes.RepositorioOficial}/releases/latest";
+
+    /// <summary>
+    /// Um GitHub falso: API da última versão (<paramref name="ultima"/>; nula = fora do ar),
+    /// API da versão, página do download (302) e o armazenamento.
+    /// </summary>
+    private sealed class GitHubFalso(string shaNaApi, byte[] arquivo, string destinoDoRedirecionamento, string? ultima = null) : HttpMessageHandler
     {
         public List<string> Pedidos { get; } = [];
 
@@ -59,6 +64,19 @@ public sealed class AtualizadorTestes : IDisposable
         {
             var url = r.RequestUri!.ToString();
             Pedidos.Add(url);
+            if (url == ApiDaUltima)
+            {
+                if (ultima is null) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+                var ultimaCorpo = JsonSerializer.Serialize(new
+                {
+                    tag_name = $"v{ultima}",
+                    assets = new[]
+                    {
+                        new { name = "IntegradorIABS.msi", digest = $"sha256:{shaNaApi}", browser_download_url = RegrasAtualizacao.UrlDoInstalador(ultima).ToString() },
+                    },
+                });
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(ultimaCorpo) });
+            }
             if (url == RegrasAtualizacao.ApiDaVersao(Versao).ToString())
             {
                 var corpo = JsonSerializer.Serialize(new
@@ -88,10 +106,10 @@ public sealed class AtualizadorTestes : IDisposable
     private const string Armazenamento = "https://release-assets.githubusercontent.com/github-production-release-asset/1/arquivo";
 
     private (SituacaoAtualizacao R, List<ProcessStartInfo> Iniciados, GitHubFalso GitHub) Rodar(
-        string shaDoPedido, string shaNaApi, byte[] arquivo, string destino = Armazenamento, string versao = Versao, bool novoPedido = true)
+        string shaDoPedido, string shaNaApi, byte[] arquivo, string destino = Armazenamento, string versao = Versao, bool novoPedido = true, string? ultima = null)
     {
         if (novoPedido) ArquivosAtualizacao.GravarPedido(_caminhos, new PedidoAtualizacao(versao, shaDoPedido, DateTimeOffset.Now));
-        var github = new GitHubFalso(shaNaApi, arquivo, destino);
+        var github = new GitHubFalso(shaNaApi, arquivo, destino, ultima);
         var iniciados = new List<ProcessStartInfo>();
         var r = new Atualizador(_caminhos, NullLogger.Instance, github, p => { iniciados.Add(p); return true; }, _area)
             .ExecutarAsync(TestContext.Current.CancellationToken).GetAwaiter().GetResult();
@@ -131,10 +149,11 @@ public sealed class AtualizadorTestes : IDisposable
     public void Pedido_ja_tratado_nao_roda_de_novo()
     {
         Rodar(ShaCerto, ShaCerto, Instalador);
-        var (r, iniciados, github) = Rodar(ShaCerto, ShaCerto, Instalador, novoPedido: false);
-        Assert.Equal("PEDIDO_JA_TRATADO", r.Codigo);
+        // ligado de novo sem pedido novo: não repete o pedido; só olha a última versão (aqui, a instalada)
+        var (r, iniciados, github) = Rodar(ShaCerto, ShaCerto, Instalador, novoPedido: false, ultima: Constantes.Versao);
+        Assert.Equal("JA_E_A_MAIS_NOVA", r.Codigo);
         Assert.Empty(iniciados);
-        Assert.Empty(github.Pedidos);
+        Assert.Equal([ApiDaUltima], github.Pedidos);
         // pedido novo (outro PedidoEm) roda
         var (r2, iniciados2, _) = Rodar(ShaCerto, ShaCerto, Instalador);
         Assert.Equal("INSTALANDO", r2.Situacao);
@@ -219,9 +238,46 @@ public sealed class AtualizadorTestes : IDisposable
             new UltimaFalsa("ultima", RegrasAtualizacao.UrlDoInstalador("9.9.9").ToString())));
     }
 
+    // ---- ligado sem pedido: o botão Atualizar da janela, por qualquer usuário (2.2.1) ----
+
     [Fact]
-    public void Sem_pedido_nao_faz_nada() =>
-        Assert.Equal("SEM_PEDIDO", new Atualizador(_caminhos, NullLogger.Instance).ExecutarAsync(TestContext.Current.CancellationToken).GetAwaiter().GetResult().Situacao);
+    public void Ligado_sem_pedido_instala_a_ultima_versao_do_github()
+    {
+        var (r, iniciados, github) = Rodar(ShaCerto, ShaCerto, Instalador, novoPedido: false, ultima: Versao);
+        Assert.Equal("INSTALANDO", r.Situacao);
+        Assert.Single(iniciados);
+        Assert.Equal(ApiDaUltima, github.Pedidos[0]);
+        Assert.Contains(RegrasAtualizacao.ApiDaVersao(Versao).ToString(), github.Pedidos);
+        // ninguém gravou nada na pasta de dados
+        Assert.True(!Directory.Exists(_pasta) || !Directory.EnumerateFileSystemEntries(_pasta).Any());
+    }
+
+    [Fact]
+    public void Ligado_sem_pedido_ja_na_mais_nova_nao_instala_nem_registra()
+    {
+        var (r, iniciados, _) = Rodar(ShaCerto, ShaCerto, Instalador, novoPedido: false, ultima: Constantes.Versao);
+        Assert.Equal("SEM_PEDIDO", r.Situacao);
+        Assert.Equal("JA_E_A_MAIS_NOVA", r.Codigo);
+        Assert.Empty(iniciados);
+        Assert.Null(_guarda.Situacao);
+    }
+
+    [Fact]
+    public void Ligado_sem_pedido_com_o_github_fora_registra_o_erro()
+    {
+        var (r, iniciados, _) = Rodar(ShaCerto, ShaCerto, Instalador, novoPedido: false, ultima: null);
+        Assert.Equal("GITHUB_INDISPONIVEL", r.Codigo);
+        Assert.Empty(iniciados);
+        Assert.Equal("ERRO", _guarda.Situacao!.Situacao);
+    }
+
+    [Fact]
+    public void Ligado_sem_pedido_com_arquivo_adulterado_nao_instala()
+    {
+        var (r, iniciados, _) = Rodar(ShaCerto, ShaCerto, "outro conteúdo"u8.ToArray(), novoPedido: false, ultima: Versao);
+        Assert.Equal("SHA256_DIVERGENTE_ARQUIVO", r.Codigo);
+        Assert.Empty(iniciados);
+    }
 
     [Theory]
     [InlineData("https://github.com/x", true)]

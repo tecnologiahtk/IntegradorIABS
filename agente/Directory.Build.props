@@ -4,7 +4,7 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2.2.0</Version>
+    <Version>2.2.1</Version>
     <Company>IABS</Company>
     <Product>Integrador IABS</Product>
     <Copyright>IABS</Copyright>

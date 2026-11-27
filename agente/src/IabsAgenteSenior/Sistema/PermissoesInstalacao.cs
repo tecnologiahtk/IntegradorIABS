@@ -73,6 +73,8 @@ public static class PermissoesInstalacao
             chave.SetValue(ValorConfiguradores, sids.Select(s => s.Value).ToArray(), RegistryValueKind.MultiString);
         }
         mensagens.Add(PastaDados.Proteger(pastaDados, sids));
+        // o que o atualizador da 2.1.3 ou anterior deixou na pasta de dados, como SYSTEM (2.2.1)
+        mensagens.AddRange(PastaDados.LimparRestosDaAtualizacaoAntiga(pastaDados));
         // a pasta do programa, que a TI pode ter escolhido fora de Program Files (2.1.4)
         mensagens.Add(PastaDados.ProtegerPastaDoPrograma(AppContext.BaseDirectory));
         foreach (var sid in sids)
@@ -88,6 +90,19 @@ public static class PermissoesInstalacao
             {
                 mensagens.Add($"AVISO: não consegui liberar o serviço para {sid} ({ex.NativeErrorCode}).");
             }
+        }
+        // o botão Atualizar da janela (2.2.1): qualquer usuário logado (console ou área de trabalho
+        // remota) pode LIGAR o atualizador, e só isso; ligado sem pedido, ele instala apenas a última
+        // versão oficial do GitHub, mais nova que a instalada, conferida pelo SHA-256
+        try
+        {
+            LiberarServico(Constantes.NomeServicoAtualizador, new SecurityIdentifier(WellKnownSidType.InteractiveSid, null),
+                ReadControl | ServiceQueryConfig | ServiceQueryStatus | ServiceStart | ServiceInterrogate);
+            mensagens.Add("Atualizador: qualquer usuário logado pode ligá-lo (botão Atualizar da janela).");
+        }
+        catch (Win32Exception ex)
+        {
+            mensagens.Add($"AVISO: não consegui liberar o atualizador para os usuários ({ex.NativeErrorCode}).");
         }
         // o integrador (conta virtual do serviço) liga o atualizador quando a IABS pede (2.1.0)
         try
@@ -151,8 +166,11 @@ public static class PermissoesInstalacao
     private const uint ScManagerConnect = 0x0001;
     private const uint DaclSecurityInformation = 0x4;
 
-    /// <summary>Acrescenta (sem tirar nada) a permissão de consultar, iniciar e parar o serviço para o SID.</summary>
-    public static void LiberarServico(string nomeServico, SecurityIdentifier sid)
+    private const uint ConsultarIniciarParar = ReadControl | ServiceQueryConfig | ServiceQueryStatus | ServiceEnumerateDependents
+                                                | ServiceStart | ServiceStop | ServiceInterrogate;
+
+    /// <summary>Acrescenta (sem tirar nada) a permissão de consultar, iniciar e parar o serviço para o SID (ou só a de <paramref name="mascara"/>).</summary>
+    public static void LiberarServico(string nomeServico, SecurityIdentifier sid, uint mascara = ConsultarIniciarParar)
     {
         var scm = OpenSCManager(null, null, ScManagerConnect);
         if (scm == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -170,8 +188,6 @@ public static class PermissoesInstalacao
                 }
                 var sd = new RawSecurityDescriptor(buffer, 0);
                 var dacl = sd.DiscretionaryAcl ?? new RawAcl(GenericAcl.AclRevision, 1);
-                const uint mascara = ReadControl | ServiceQueryConfig | ServiceQueryStatus | ServiceEnumerateDependents
-                                     | ServiceStart | ServiceStop | ServiceInterrogate;
                 var jaTem = dacl.OfType<CommonAce>().Any(a =>
                     a.AceQualifier == AceQualifier.AccessAllowed && a.SecurityIdentifier == sid && ((uint)a.AccessMask & mascara) == mascara);
                 if (jaTem) return;

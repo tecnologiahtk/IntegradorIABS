@@ -11,7 +11,10 @@ namespace IabsAgenteSenior.Atualizacao;
 /// O atualizador (2.1.0): serviço separado, como SYSTEM, que o integrador
 /// liga quando a IABS pede uma versão nova. Ele:
 ///   1. lê o pedido (versão e SHA-256 que a IABS mandou); pedido já tratado
-///      não roda de novo (um pedido, uma tentativa);
+///      não roda de novo (um pedido, uma tentativa). Ligado sem pedido novo
+///      (2.2.1: o botão Atualizar da janela, que qualquer usuário logado pode
+///      usar), pega na API do GitHub a última versão publicada e o SHA-256
+///      dela: quem liga não escolhe versão nem arquivo;
 ///   2. só segue com versão mais nova que a instalada;
 ///   3. pega na API do GitHub o SHA-256 do instalador daquela versão, no
 ///      repositório oficial: tem de ser igual ao da IABS;
@@ -38,24 +41,66 @@ public sealed class Atualizador(
     public async Task<SituacaoAtualizacao> ExecutarAsync(CancellationToken ct)
     {
         var pedido = ArquivosAtualizacao.LerPedido(caminhos);
-        if (pedido is null) return new SituacaoAtualizacao("?", "SEM_PEDIDO", null, DateTimeOffset.Now);
         // um pedido, uma tentativa: o atualizador não apaga o pedido (fica na
         // pasta de dados), marca no registro que já tratou este
-        if (_area.Guarda.PedidoTratado() == pedido.PedidoEm)
+        if (pedido is not null && _area.Guarda.PedidoTratado() != pedido.PedidoEm)
         {
-            return new SituacaoAtualizacao(pedido.Versao, "SEM_PEDIDO", "PEDIDO_JA_TRATADO", DateTimeOffset.Now);
+            try
+            {
+                _area.Guarda.MarcarPedidoTratado(pedido.PedidoEm);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+            {
+                return Registrar(pedido.Versao, "ERRO", "PEDIDO_PRESO");
+            }
+            return await InstalarAsync(pedido.Versao, pedido.Sha256, ct);
         }
+        return await InstalarUltimaAsync(ct);
+    }
+
+    /// <summary>
+    /// Ligado sem pedido novo da IABS (2.2.1): o botão Atualizar da janela, que
+    /// qualquer usuário logado pode usar. Só a última versão publicada no
+    /// repositório oficial e mais nova que a instalada, com o SHA-256 do
+    /// GitHub, conferido de novo na API da versão e no arquivo.
+    /// </summary>
+    private async Task<SituacaoAtualizacao> InstalarUltimaAsync(CancellationToken ct)
+    {
+        VersaoPublicada? ultima;
         try
         {
-            _area.Guarda.MarcarPedidoTratado(pedido.PedidoEm);
+            ultima = await VerificadorAtualizacao.UltimaVersaoAsync(ProxyDaMaquina(), ct, handler);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
         {
-            return Registrar(pedido.Versao, "ERRO", "PEDIDO_PRESO");
+            return Registrar("última", "ERRO", "GITHUB_INDISPONIVEL");
         }
+        if (ultima is null) return Registrar("última", "ERRO", "VERSAO_SEM_INSTALADOR");
+        if (!RegrasAtualizacao.MaisNova(ultima.Versao, Constantes.Versao))
+        {
+            logger.LogInformation("Atualizador ligado sem pedido: a versão instalada ({Versao}) já é a mais nova.", Constantes.Versao);
+            return new SituacaoAtualizacao(ultima.Versao, "SEM_PEDIDO", "JA_E_A_MAIS_NOVA", DateTimeOffset.Now);
+        }
+        logger.LogInformation("Atualizador ligado sem pedido da IABS: instalando a última versão publicada ({Versao}).", ultima.Versao);
+        return await InstalarAsync(ultima.Versao, ultima.Sha256, ct);
+    }
 
-        var versao = pedido.Versao;
-        if (!RegrasAtualizacao.VersaoValida(versao) || !RegrasAtualizacao.Sha256Valido(pedido.Sha256)) return Registrar(versao, "ERRO", "PEDIDO_INVALIDO");
+    private ConfiguracaoProxy ProxyDaMaquina()
+    {
+        try
+        {
+            return ConfiguracaoIntegrador.Carregar(caminhos)?.ProxyPrincipal ?? new ConfiguracaoProxy();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            return new ConfiguracaoProxy();
+        }
+    }
+
+    /// <summary>Passos 2 a 5: a versão e o SHA-256 esperados (o da IABS, ou o do GitHub quando quem liga é a janela).</summary>
+    private async Task<SituacaoAtualizacao> InstalarAsync(string versao, string sha, CancellationToken ct)
+    {
+        if (!RegrasAtualizacao.VersaoValida(versao) || !RegrasAtualizacao.Sha256Valido(sha)) return Registrar(versao, "ERRO", "PEDIDO_INVALIDO");
         if (!RegrasAtualizacao.MaisNova(versao, Constantes.Versao)) return Registrar(versao, "ERRO", "VERSAO_NAO_E_MAIS_NOVA");
 
         Registrar(versao, "BAIXANDO", null);
@@ -73,7 +118,7 @@ public sealed class Atualizador(
             return Registrar(versao, "ERRO", "GITHUB_INDISPONIVEL");
         }
         if (shaGitHub is null) return Registrar(versao, "ERRO", "VERSAO_SEM_INSTALADOR");
-        if (shaGitHub != pedido.Sha256) return Registrar(versao, "ERRO", "SHA256_DIVERGENTE_GITHUB");
+        if (shaGitHub != sha) return Registrar(versao, "ERRO", "SHA256_DIVERGENTE_GITHUB");
         if (urlGitHub != RegrasAtualizacao.UrlDoInstalador(versao).ToString()) return Registrar(versao, "ERRO", "URL_INESPERADA");
 
         string pasta;
@@ -96,13 +141,13 @@ public sealed class Atualizador(
             ApagarSemErro(arquivo);
             return Registrar(versao, "ERRO", ex is InvalidOperationException ? ex.Message : "DOWNLOAD_FALHOU");
         }
-        if (shaArquivo != pedido.Sha256)
+        if (shaArquivo != sha)
         {
             ApagarSemErro(arquivo);
             return Registrar(versao, "ERRO", "SHA256_DIVERGENTE_ARQUIVO");
         }
         // de novo, logo antes do msiexec: o arquivo que vai ser instalado é o conferido
-        if (await ShaDoArquivoAsync(arquivo, ct) != pedido.Sha256)
+        if (await ShaDoArquivoAsync(arquivo, ct) != sha)
         {
             ApagarSemErro(arquivo);
             return Registrar(versao, "ERRO", "SHA256_DIVERGENTE_ARQUIVO");
