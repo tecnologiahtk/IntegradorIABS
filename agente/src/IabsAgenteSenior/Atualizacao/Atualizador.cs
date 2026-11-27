@@ -10,30 +10,46 @@ namespace IabsAgenteSenior.Atualizacao;
 /// <summary>
 /// O atualizador (2.1.0): serviço separado, como SYSTEM, que o integrador
 /// liga quando a IABS pede uma versão nova. Ele:
-///   1. lê o pedido (versão e SHA-256 que a IABS mandou) e o apaga;
+///   1. lê o pedido (versão e SHA-256 que a IABS mandou); pedido já tratado
+///      não roda de novo (um pedido, uma tentativa);
 ///   2. só segue com versão mais nova que a instalada;
 ///   3. pega na API do GitHub o SHA-256 do instalador daquela versão, no
 ///      repositório oficial: tem de ser igual ao da IABS;
-///   4. baixa o instalador (só HTTPS, só GitHub, até 300 MB) e confere o
-///      SHA-256 do arquivo: tem de ser igual aos dois;
-///   5. roda o msiexec com esse arquivo, sem janela, e termina. O instalador
-///      para o integrador, troca os arquivos e liga de novo.
+///   4. baixa o instalador (só HTTPS, só GitHub, até 300 MB) numa pasta só de
+///      SYSTEM e administradores (AreaDoSistema) e confere o SHA-256 do
+///      arquivo: tem de ser igual aos dois;
+///   5. confere o SHA-256 de novo logo antes, roda o msiexec com esse
+///      arquivo, sem janela, e termina. O instalador para o integrador, troca
+///      os arquivos e liga de novo.
 /// Para instalar algo falso, alguém teria de adulterar o GitHub E a IABS.
-/// Cada passo fica em atualizacao.json, que o integrador manda à IABS.
+/// Nada é gravado nem apagado na pasta de dados (revisão de 27/11/2026): a
+/// situação de cada passo fica no registro, que o integrador manda à IABS.
 /// </summary>
-public sealed class Atualizador(Caminhos caminhos, ILogger logger, HttpMessageHandler? handler = null, Func<ProcessStartInfo, bool>? iniciarProcesso = null)
+public sealed class Atualizador(
+    Caminhos caminhos,
+    ILogger logger,
+    HttpMessageHandler? handler = null,
+    Func<ProcessStartInfo, bool>? iniciarProcesso = null,
+    AreaDoSistema? area = null)
 {
     private const long TamanhoMaximo = 300L * 1024 * 1024;
+    private readonly AreaDoSistema _area = area ?? AreaDoSistema.Padrao();
 
     public async Task<SituacaoAtualizacao> ExecutarAsync(CancellationToken ct)
     {
         var pedido = ArquivosAtualizacao.LerPedido(caminhos);
-        if (pedido is null) return Registrar("?", "SEM_PEDIDO", null);
+        if (pedido is null) return new SituacaoAtualizacao("?", "SEM_PEDIDO", null, DateTimeOffset.Now);
+        // um pedido, uma tentativa: o atualizador não apaga o pedido (fica na
+        // pasta de dados), marca no registro que já tratou este
+        if (_area.Guarda.PedidoTratado() == pedido.PedidoEm)
+        {
+            return new SituacaoAtualizacao(pedido.Versao, "SEM_PEDIDO", "PEDIDO_JA_TRATADO", DateTimeOffset.Now);
+        }
         try
         {
-            File.Delete(ArquivosAtualizacao.Pedido(caminhos)); // um pedido, uma tentativa
+            _area.Guarda.MarcarPedidoTratado(pedido.PedidoEm);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
             return Registrar(pedido.Versao, "ERRO", "PEDIDO_PRESO");
         }
@@ -60,8 +76,15 @@ public sealed class Atualizador(Caminhos caminhos, ILogger logger, HttpMessageHa
         if (shaGitHub != pedido.Sha256) return Registrar(versao, "ERRO", "SHA256_DIVERGENTE_GITHUB");
         if (urlGitHub != RegrasAtualizacao.UrlDoInstalador(versao).ToString()) return Registrar(versao, "ERRO", "URL_INESPERADA");
 
-        var pasta = ArquivosAtualizacao.Pasta(caminhos);
-        Directory.CreateDirectory(pasta);
+        string pasta;
+        try
+        {
+            pasta = _area.NovaPastaDeInstalacao();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Registrar(versao, "ERRO", "PASTA_DO_SISTEMA");
+        }
         var arquivo = Path.Combine(pasta, $"IntegradorIABS-{versao}.msi");
         string shaArquivo;
         try
@@ -74,6 +97,12 @@ public sealed class Atualizador(Caminhos caminhos, ILogger logger, HttpMessageHa
             return Registrar(versao, "ERRO", ex is InvalidOperationException ? ex.Message : "DOWNLOAD_FALHOU");
         }
         if (shaArquivo != pedido.Sha256)
+        {
+            ApagarSemErro(arquivo);
+            return Registrar(versao, "ERRO", "SHA256_DIVERGENTE_ARQUIVO");
+        }
+        // de novo, logo antes do msiexec: o arquivo que vai ser instalado é o conferido
+        if (await ShaDoArquivoAsync(arquivo, ct) != pedido.Sha256)
         {
             ApagarSemErro(arquivo);
             return Registrar(versao, "ERRO", "SHA256_DIVERGENTE_ARQUIVO");
@@ -159,6 +188,12 @@ public sealed class Atualizador(Caminhos caminhos, ILogger logger, HttpMessageHa
         return Convert.ToHexStringLower(sha.GetHashAndReset());
     }
 
+    private static async Task<string> ShaDoArquivoAsync(string arquivo, CancellationToken ct)
+    {
+        await using var f = new FileStream(arquivo, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return Convert.ToHexStringLower(await SHA256.HashDataAsync(f, ct));
+    }
+
     private static void ApagarSemErro(string arquivo)
     {
         try
@@ -175,9 +210,9 @@ public sealed class Atualizador(Caminhos caminhos, ILogger logger, HttpMessageHa
         var s = new SituacaoAtualizacao(versao, situacao, codigo, DateTimeOffset.Now);
         try
         {
-            ArquivosAtualizacao.GravarSituacao(caminhos, s);
+            _area.Guarda.Gravar(s);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
             // sem a situação, a IABS só não vê o motivo
         }

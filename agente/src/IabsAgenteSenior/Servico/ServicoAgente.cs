@@ -50,7 +50,18 @@ public sealed class ServicoAgente(Caminhos caminhos, ILoggerFactory fabrica) : B
                 continue;
             }
 
-            await RodarComAsync(cfg, gravadaEm, stoppingToken);
+            try
+            {
+                await RodarComAsync(cfg, gravadaEm, stoppingToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
+            {
+                // erro inesperado no canal (2.1.4): o serviço não para; o canal abre de novo em 30 s.
+                // Antes, o serviço terminava com saída 0 e o Windows não o religava.
+                _logger.LogError("Canal com a IABS parou por um erro inesperado ({Tipo}); abrindo de novo em 30 s.", ex.GetType().Name);
+                _estado.Desconectou("Erro inesperado no canal: abrindo de novo em 30 segundos.");
+                if (!await EsperarAsync(TimeSpan.FromSeconds(30), stoppingToken)) break;
+            }
         }
         _logger.LogInformation("Serviço {Nome} parado.", Constantes.NomeExibicao);
     }

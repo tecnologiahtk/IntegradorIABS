@@ -10,23 +10,44 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace IabsAgenteSenior.Testes;
 
+/// <summary>A guarda do atualizador em memória (no serviço, o registro).</summary>
+internal sealed class GuardaEmMemoria : IGuardaDaAtualizacao
+{
+    public SituacaoAtualizacao? Situacao { get; private set; }
+    private DateTimeOffset? _pedido;
+
+    public SituacaoAtualizacao? Ler() => Situacao;
+    public void Gravar(SituacaoAtualizacao s) => Situacao = s;
+    public DateTimeOffset? PedidoTratado() => _pedido;
+    public void MarcarPedidoTratado(DateTimeOffset em) => _pedido = em;
+}
+
 /// <summary>
 /// O atualizador só instala a versão mais nova do repositório oficial, com o
-/// SHA-256 da IABS igual ao do GitHub e ao do arquivo baixado.
+/// SHA-256 da IABS igual ao do GitHub e ao do arquivo baixado. Ele roda como
+/// SYSTEM e não grava nem apaga nada na pasta de dados (revisão de 27/11/2026).
 /// </summary>
 public sealed class AtualizadorTestes : IDisposable
 {
     private readonly string _pasta = Path.Combine(Path.GetTempPath(), $"iabs-atualizador-teste-{Guid.NewGuid():N}");
+    private readonly string _pastaDoSistema = Path.Combine(Path.GetTempPath(), $"iabs-atualizador-sistema-{Guid.NewGuid():N}");
     private readonly Caminhos _caminhos;
+    private readonly GuardaEmMemoria _guarda = new();
+    private readonly AreaDoSistema _area;
     private static readonly byte[] Instalador = "MSI de teste — não é um instalador de verdade"u8.ToArray();
     private static readonly string ShaCerto = Convert.ToHexStringLower(SHA256.HashData(Instalador));
     private const string Versao = "9.9.9";
 
-    public AtualizadorTestes() => _caminhos = Caminhos.Resolver(_pasta);
+    public AtualizadorTestes()
+    {
+        _caminhos = Caminhos.Resolver(_pasta);
+        _area = new AreaDoSistema(_pastaDoSistema, _guarda);
+    }
 
     public void Dispose()
     {
         if (Directory.Exists(_pasta)) Directory.Delete(_pasta, recursive: true);
+        if (Directory.Exists(_pastaDoSistema)) Directory.Delete(_pastaDoSistema, recursive: true);
     }
 
     /// <summary>Um GitHub falso: API da versão, página do download (302) e o armazenamento.</summary>
@@ -67,12 +88,12 @@ public sealed class AtualizadorTestes : IDisposable
     private const string Armazenamento = "https://release-assets.githubusercontent.com/github-production-release-asset/1/arquivo";
 
     private (SituacaoAtualizacao R, List<ProcessStartInfo> Iniciados, GitHubFalso GitHub) Rodar(
-        string shaDoPedido, string shaNaApi, byte[] arquivo, string destino = Armazenamento, string versao = Versao)
+        string shaDoPedido, string shaNaApi, byte[] arquivo, string destino = Armazenamento, string versao = Versao, bool novoPedido = true)
     {
-        ArquivosAtualizacao.GravarPedido(_caminhos, new PedidoAtualizacao(versao, shaDoPedido, DateTimeOffset.Now));
+        if (novoPedido) ArquivosAtualizacao.GravarPedido(_caminhos, new PedidoAtualizacao(versao, shaDoPedido, DateTimeOffset.Now));
         var github = new GitHubFalso(shaNaApi, arquivo, destino);
         var iniciados = new List<ProcessStartInfo>();
-        var r = new Atualizador(_caminhos, NullLogger.Instance, github, p => { iniciados.Add(p); return true; })
+        var r = new Atualizador(_caminhos, NullLogger.Instance, github, p => { iniciados.Add(p); return true; }, _area)
             .ExecutarAsync(TestContext.Current.CancellationToken).GetAwaiter().GetResult();
         return (r, iniciados, github);
     }
@@ -89,8 +110,48 @@ public sealed class AtualizadorTestes : IDisposable
         Assert.Contains("/qn", p.ArgumentList);
         Assert.Equal(Instalador, File.ReadAllBytes(p.ArgumentList[1]));
         Assert.Contains(Armazenamento, github.Pedidos);
-        Assert.False(File.Exists(ArquivosAtualizacao.Pedido(_caminhos)), "o pedido é apagado: uma tentativa só");
-        Assert.Equal("INSTALANDO", ArquivosAtualizacao.LerSituacao(_caminhos)!.Situacao);
+        Assert.Equal("INSTALANDO", ArquivosAtualizacao.LerSituacao(_caminhos, _guarda)!.Situacao);
+    }
+
+    [Fact]
+    public void Instalador_e_log_ficam_na_area_do_sistema_e_nada_e_gravado_na_pasta_de_dados()
+    {
+        var (_, iniciados, _) = Rodar(ShaCerto, ShaCerto, Instalador);
+        var p = Assert.Single(iniciados);
+        var msi = p.ArgumentList[1];
+        var log = p.ArgumentList[p.ArgumentList.IndexOf("/l*v") + 1];
+        Assert.StartsWith(_area.PastaInstaladores + Path.DirectorySeparatorChar, msi);
+        Assert.Equal(Path.GetDirectoryName(msi), Path.GetDirectoryName(log));
+        // a pasta de dados só tem o pedido, que o atualizador leu e não apagou
+        Assert.Equal([ArquivosAtualizacao.Pedido(_caminhos)], Directory.GetFileSystemEntries(_pasta));
+        Assert.Equal("INSTALANDO", _guarda.Situacao!.Situacao);
+    }
+
+    [Fact]
+    public void Pedido_ja_tratado_nao_roda_de_novo()
+    {
+        Rodar(ShaCerto, ShaCerto, Instalador);
+        var (r, iniciados, github) = Rodar(ShaCerto, ShaCerto, Instalador, novoPedido: false);
+        Assert.Equal("PEDIDO_JA_TRATADO", r.Codigo);
+        Assert.Empty(iniciados);
+        Assert.Empty(github.Pedidos);
+        // pedido novo (outro PedidoEm) roda
+        var (r2, iniciados2, _) = Rodar(ShaCerto, ShaCerto, Instalador);
+        Assert.Equal("INSTALANDO", r2.Situacao);
+        Assert.Single(iniciados2);
+    }
+
+    [Fact]
+    public void Situacao_mais_recente_entre_o_pedido_e_o_atualizador()
+    {
+        var antes = DateTimeOffset.Now.AddMinutes(-5);
+        ArquivosAtualizacao.GravarSituacao(_caminhos, new SituacaoAtualizacao(Versao, "PEDIDA", null, antes));
+        Assert.Equal("PEDIDA", ArquivosAtualizacao.LerSituacao(_caminhos, _guarda)!.Situacao);
+        _guarda.Gravar(new SituacaoAtualizacao(Versao, "INSTALANDO", null, antes.AddMinutes(1)));
+        Assert.Equal("INSTALANDO", ArquivosAtualizacao.LerSituacao(_caminhos, _guarda)!.Situacao);
+        // pedido novo depois da última atualização
+        ArquivosAtualizacao.GravarSituacao(_caminhos, new SituacaoAtualizacao(Versao, "PEDIDA", null, antes.AddMinutes(2)));
+        Assert.Equal("PEDIDA", ArquivosAtualizacao.LerSituacao(_caminhos, _guarda)!.Situacao);
     }
 
     [Fact]
@@ -108,7 +169,7 @@ public sealed class AtualizadorTestes : IDisposable
         var (r, iniciados, _) = Rodar(ShaCerto, ShaCerto, "outro conteúdo"u8.ToArray());
         Assert.Equal("SHA256_DIVERGENTE_ARQUIVO", r.Codigo);
         Assert.Empty(iniciados);
-        Assert.False(File.Exists(Path.Combine(ArquivosAtualizacao.Pasta(_caminhos), $"IntegradorIABS-{Versao}.msi")));
+        Assert.Empty(Directory.GetFiles(_area.PastaInstaladores, "*.msi", SearchOption.AllDirectories));
     }
 
     [Fact]

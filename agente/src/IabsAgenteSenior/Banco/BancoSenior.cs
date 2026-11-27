@@ -20,18 +20,17 @@ public sealed class ErroOperacao(string codigo, IReadOnlyDictionary<string, obje
 
 /// <summary>
 /// Abre conexões com o SQL Server do Senior (pool do SqlClient: abrir por
-/// operação é barato). A conexão é sempre cifrada; se o certificado do servidor
-/// não for de uma autoridade reconhecida (o comum em servidor de empresa), segue
-/// cifrada sem validar, e isso fica registrado.
+/// operação é barato). A conexão é sempre cifrada e o certificado do servidor
+/// é validado. Certificado que não é de uma autoridade reconhecida (o comum em
+/// servidor de empresa) só passa com a caixa "Confiar no certificado do SQL
+/// Server" marcada pela TI (2.1.4; antes o integrador passava a confiar sozinho).
 /// </summary>
 public sealed partial class BancoSenior(ConfiguracaoBanco cfg, ILogger logger)
 {
-    private bool _confiarCertificado = cfg.ConfiarCertificadoServidor;
-
     public ConfiguracaoBanco Config => cfg;
 
-    /// <summary>O certificado do SQL Server não é de autoridade reconhecida e a conexão seguiu cifrada, sem validar.</summary>
-    public bool CertificadoNaoValidado { get; private set; }
+    /// <summary>A TI marcou "Confiar no certificado do SQL Server": a conexão é cifrada, sem validar o certificado.</summary>
+    public bool CertificadoNaoValidado => cfg.ConfiarCertificadoServidor;
 
     /// <summary>Prefixo das tabelas: [schema]. (vazio = schema padrão do login).</summary>
     public string Prefixo
@@ -75,32 +74,26 @@ public sealed partial class BancoSenior(ConfiguracaoBanco cfg, ILogger logger)
         return s.ConnectionString;
     }
 
-    /// <summary>Conexão aberta. Erro do banco vira ErroOperacao (código estável, sem o texto do banco).</summary>
+    /// <summary>
+    /// Conexão aberta. Erro do banco vira ErroOperacao (código estável, sem o
+    /// texto do banco). Certificado do SQL Server que não é de uma autoridade
+    /// reconhecida = BANCO_CERTIFICADO: o integrador não passa a confiar nele
+    /// sozinho (revisão de 27/11/2026); só com a caixa "Confiar no certificado
+    /// do SQL Server" marcada pela TI na aba 2 (cifrado, sem validar).
+    /// </summary>
     public async Task<SqlConnection> AbrirAsync(CancellationToken ct)
     {
-        var conexao = new SqlConnection(TextoConexao(_confiarCertificado));
+        var conexao = new SqlConnection(TextoConexao(cfg.ConfiarCertificadoServidor));
         try
         {
             await conexao.OpenAsync(ct);
             return conexao;
         }
-        catch (SqlException ex) when (!_confiarCertificado && ErroDeCertificado(ex))
+        catch (SqlException ex) when (!cfg.ConfiarCertificadoServidor && ErroDeCertificado(ex))
         {
             await conexao.DisposeAsync();
-            logger.LogWarning("O certificado do SQL Server não é de uma autoridade reconhecida; conectando cifrado, sem validar o certificado.");
-            _confiarCertificado = true;
-            CertificadoNaoValidado = true;
-            conexao = new SqlConnection(TextoConexao(true));
-            try
-            {
-                await conexao.OpenAsync(ct);
-                return conexao;
-            }
-            catch (SqlException ex2)
-            {
-                await conexao.DisposeAsync();
-                throw Traduzir(ex2.Number, ex2.Message, gravando: false);
-            }
+            logger.LogWarning("O certificado do SQL Server não é de uma autoridade reconhecida: a conexão não foi aberta (BANCO_CERTIFICADO).");
+            throw new ErroOperacao("BANCO_CERTIFICADO");
         }
         catch (SqlException ex)
         {

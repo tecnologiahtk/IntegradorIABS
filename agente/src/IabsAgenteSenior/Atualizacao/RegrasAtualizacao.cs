@@ -7,7 +7,7 @@ namespace IabsAgenteSenior.Atualizacao;
 /// <summary>O pedido que o integrador deixa para o atualizador (atualizar.json na pasta de dados).</summary>
 public sealed record PedidoAtualizacao(string Versao, string Sha256, DateTimeOffset PedidoEm);
 
-/// <summary>Como ficou a última atualização (atualizacao.json): vai no "ola" para a IABS ver.</summary>
+/// <summary>Como ficou a última atualização: vai no "ola" para a IABS ver.</summary>
 public sealed record SituacaoAtualizacao(string Versao, string Situacao, string? Codigo, DateTimeOffset Em);
 
 /// <summary>
@@ -63,14 +63,18 @@ public static partial class RegrasAtualizacao
     }
 }
 
-/// <summary>Os arquivos da atualização na pasta de dados.</summary>
+/// <summary>
+/// Os arquivos da atualização na pasta de dados, gravados só pelo integrador e
+/// pela janela (nunca pelo atualizador, que roda como SYSTEM: AreaDoSistema).
+/// O pedido (atualizar.json) é lido pelo atualizador; a situação "PEDIDA"
+/// (atualizacao.json) é a do pedido, e a do atualizador fica no registro.
+/// </summary>
 public static class ArquivosAtualizacao
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public static string Pedido(Caminhos c) => Path.Combine(c.PastaDados, "atualizar.json");
     public static string Situacao(Caminhos c) => Path.Combine(c.PastaDados, "atualizacao.json");
-    public static string Pasta(Caminhos c) => Path.Combine(c.PastaDados, "atualizacao");
 
     public static void GravarPedido(Caminhos c, PedidoAtualizacao p) => Gravar(Pedido(c), p);
 
@@ -78,7 +82,15 @@ public static class ArquivosAtualizacao
 
     public static void GravarSituacao(Caminhos c, SituacaoAtualizacao s) => Gravar(Situacao(c), s);
 
-    public static SituacaoAtualizacao? LerSituacao(Caminhos c) => Ler<SituacaoAtualizacao>(Situacao(c));
+    /// <summary>A situação mais recente: a do pedido (pasta de dados) ou a do atualizador (registro).</summary>
+    public static SituacaoAtualizacao? LerSituacao(Caminhos c, IGuardaDaAtualizacao? sistema = null)
+    {
+        var doPedido = Ler<SituacaoAtualizacao>(Situacao(c));
+        var doAtualizador = (sistema ?? new GuardaNoRegistro()).Ler();
+        if (doPedido is null) return doAtualizador;
+        if (doAtualizador is null) return doPedido;
+        return doAtualizador.Em >= doPedido.Em ? doAtualizador : doPedido;
+    }
 
     private static void Gravar<T>(string arquivo, T valor)
     {

@@ -127,6 +127,55 @@ public sealed class CanalTestes : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Mensagem_fora_do_formato_e_ignorada_e_pedido_vencido_na_fila_nao_comeca()
+    {
+        JsonElement? demorado = null;
+        JsonElement? vencido = null;
+        JsonElement? depois = null;
+        var endereco = await SubirIabsAsync(async (ws, _) =>
+        {
+            using (await ReceberAsync(ws)) { }
+            await EnviarAsync(ws, new { tipo = "bemvindo", conexao = "c" });
+            // fora do formato (2.1.4): não é objeto, "tipo" que não é texto, id que não é texto
+            await ws.SendAsync("[1,2]"u8.ToArray(), WebSocketMessageType.Text, true, CancellationToken.None);
+            await EnviarAsync(ws, new { tipo = 5 });
+            await EnviarAsync(ws, new { tipo = "pedido", id = 7, op = "testar" });
+            // o primeiro demora 300 ms; o segundo, com prazo de 100 ms, vence na fila
+            await EnviarAsync(ws, new { tipo = "pedido", id = "p1", op = "testar", @params = new { }, prazo_ms = 5000 });
+            await EnviarAsync(ws, new { tipo = "pedido", id = "p2", op = "testar", @params = new { }, prazo_ms = 100 });
+            for (var i = 0; i < 2; i++)
+            {
+                using var d = await ReceberAsync(ws);
+                var e = d.RootElement.Clone();
+                if (e.GetProperty("id").GetString() == "p1") demorado = e;
+                else vencido = e;
+            }
+            await EnviarAsync(ws, new { tipo = "pedido", id = "p3", op = "situacoes", @params = new { empresas = new[] { 101 }, tipos = new[] { 1 } } });
+            using (var d = await ReceberAsync(ws)) depois = d.RootElement.Clone();
+            await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "fim", CancellationToken.None);
+        });
+
+        var ops = new OperacoesFalsas { Demora = TimeSpan.FromMilliseconds(300) };
+        var fim = await Canal(Config(endereco), ops).TestarAsyncSemTeste(TestContext.Current.CancellationToken);
+
+        Assert.True(demorado!.Value.GetProperty("ok").GetBoolean());
+        Assert.False(vencido!.Value.GetProperty("ok").GetBoolean());
+        Assert.Equal("PRAZO_VENCIDO", vencido.Value.GetProperty("erro").GetProperty("codigo").GetString());
+        Assert.True(depois!.Value.GetProperty("ok").GetBoolean(), "o canal seguiu depois das mensagens fora do formato");
+        Assert.Equal(1, ops.Chamadas.Count(c => c == "testar")); // o vencido não chegou ao banco
+        Assert.Equal("FECHADA", fim.Codigo);
+    }
+
+    [Fact]
+    public async Task Iabs_indisponivel_no_handshake_tenta_de_novo_sem_pedir_chave_nova()
+    {
+        var endereco = await SubirIabsAsync((_, _) => Task.CompletedTask, recusarCom: 503);
+        var fim = await Canal(Config(endereco), new OperacoesFalsas()).TestarAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("IABS_INDISPONIVEL", fim.Codigo);
+        Assert.Null(fim.EsperaLonga);
+    }
+
+    [Fact]
     public async Task Chave_recusada_no_handshake()
     {
         var endereco = await SubirIabsAsync((_, _) => Task.CompletedTask, recusarCom: 401);

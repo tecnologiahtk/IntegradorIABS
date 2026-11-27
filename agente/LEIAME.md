@@ -81,6 +81,7 @@ Comandos: `requisitos`, `configurar`, `testar-banco`, `testar-iabs`, `diagnostic
 ### O que pedir à TI do cliente
 
 - **Rede:** saída HTTPS (443) do servidor para o endereço da IABS, com WebSocket liberado no proxy, se houver. Para a atualização automática (2.1.0), também `github.com`, `api.github.com` e `*.githubusercontent.com` (de onde o atualizador baixa a versão nova).
+- **Certificado do SQL Server:** a conexão é sempre cifrada e, desde a 2.1.4, o certificado é validado. Se o certificado do servidor não for de uma autoridade reconhecida (o comum em servidor de empresa), o teste da aba 2 avisa e a TI marca **Confiar no certificado do SQL Server** (cifrado, sem validar). Antes da 2.1.4 o integrador passava a confiar sozinho; quem atualizar e tiver esse caso marca a caixa uma vez.
 - **Banco:** um login no SQL Server do Senior com leitura nas tabelas `r034fun`, `r034cpl`, `r016orn`, `r018ccu`, `r024car`, `r030fil`, `r006esc`, `r010sit` e `r038afa`; para lançar os atestados, também INSERT, UPDATE e DELETE na `r038afa`.
 
 ## Atualizar
@@ -92,7 +93,7 @@ Desde a 2.1.0, a IABS atualiza o integrador: na tela de Integrações aparece "v
 3. baixa o instalador (só HTTPS, só GitHub) e confere o SHA-256 do arquivo;
 4. roda `msiexec /i ... /qn` e se desliga. O instalador para o integrador, troca os arquivos e liga de novo; a configuração fica.
 
-Se qualquer conferência falhar, nada é instalado, e o motivo aparece na tela da IABS e na janela (`atualizacao.json` na pasta de dados).
+Se qualquer conferência falhar, nada é instalado, e o motivo aparece na tela da IABS e na janela. Desde a 2.1.4, o atualizador (SYSTEM) não grava nada na pasta de dados: o instalador baixado e os logs dele ficam em `C:\Windows\System32\config\systemprofile\AppData\Local\IABS\AgenteSenior` (só administradores abrem) e a situação, em `HKLM\SOFTWARE\IABS\AgenteSenior\Atualizacao`.
 
 A TI também pode atualizar pela janela: aba **3. Situação** → **Verificar atualização** (consulta a última versão publicada neste repositório) → **Atualizar para X**. Vale o mesmo atualizador e a mesma conferência (SHA-256 do GitHub e do arquivo; o da IABS só entra quando quem pede é a tela da IABS). Durante a instalação a janela fecha; depois, abra pelo atalho. À mão, também vale rodar o `IntegradorIABS.msi` novo por cima.
 

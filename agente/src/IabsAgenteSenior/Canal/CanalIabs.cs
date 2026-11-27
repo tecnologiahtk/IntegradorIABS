@@ -137,6 +137,8 @@ public sealed class CanalIabs(
                 {
                     401 => new FimDaSessao("CHAVE_RECUSADA", "A IABS recusou a chave do integrador. Gere uma chave nova na tela de Integrações da IABS e salve aqui.", false),
                     403 => new FimDaSessao("CONEXAO_EXCLUIDA", "A conexão desta chave foi excluída na IABS.", false),
+                    // 2.1.4: erro do lado da IABS ao conferir a chave; tenta de novo logo, sem pedir chave nova
+                    503 => new FimDaSessao("IABS_INDISPONIVEL", "A IABS está indisponível agora: o integrador tenta de novo em instantes.", false),
                     426 => new FimDaSessao("PROTOCOLO_ANTIGO", "Esta versão do integrador não é mais aceita pela IABS: instale a versão nova.", false),
                     0 => new FimDaSessao("SEM_RESPOSTA", $"Não consegui chegar à IABS ({uri.Host}): confira a rede, o proxy e o firewall.", false),
                     var codigo => new FimDaSessao("SEM_RESPOSTA", $"A IABS respondeu {codigo} ao abrir o canal.", false),
@@ -172,9 +174,12 @@ public sealed class CanalIabs(
                     continue;
                 }
                 using (doc)
+                try
                 {
                     var raiz = doc.RootElement;
-                    var tipo = raiz.TryGetProperty("tipo", out var t) ? t.GetString() : null;
+                    // só objeto com "tipo" texto (2.1.4): o resto é ignorado, sem derrubar o canal
+                    if (raiz.ValueKind != JsonValueKind.Object) throw new FormatException("mensagem não é objeto");
+                    var tipo = raiz.TryGetProperty("tipo", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null;
                     if (tipo == "bemvindo")
                     {
                         conexaoIabs = raiz.TryGetProperty("conexao", out var c) ? c.GetString() : null;
@@ -188,13 +193,17 @@ public sealed class CanalIabs(
                     }
                     else if (tipo == "pedido")
                     {
-                        var id = raiz.TryGetProperty("id", out var i) ? i.GetString() : null;
-                        var op = raiz.TryGetProperty("op", out var o) ? o.GetString() : null;
+                        var id = Texto(raiz, "id");
+                        var op = Texto(raiz, "op");
                         var parametros = raiz.TryGetProperty("params", out var p) ? p.Clone() : default;
                         if (id is null || op is null) continue;
                         pendentes.RemoveAll(x => x.IsCompleted);
-                        pendentes.Add(AtenderAsync(ws, envio, fila, id, op, parametros, sessao.Token));
+                        pendentes.Add(AtenderAsync(ws, envio, fila, id, op, parametros, Prazo(raiz), sessao.Token));
                     }
+                }
+                catch (Exception ex) when (ex is FormatException or InvalidOperationException and not ObjectDisposedException)
+                {
+                    logger.LogWarning("Mensagem da IABS fora do formato ({Tipo}); ignorada.", ex.GetType().Name);
                 }
             }
             return FimPeloFechamento(ws, conexaoIabs);
@@ -272,15 +281,41 @@ public sealed class CanalIabs(
         };
     }
 
-    private async Task AtenderAsync(ClientWebSocket ws, SemaphoreSlim envio, SemaphoreSlim fila, string id, string op, JsonElement parametros, CancellationToken ct)
+    private static string? Texto(JsonElement raiz, string nome) =>
+        raiz.TryGetProperty(nome, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+    /// <summary>
+    /// O prazo do pedido (prazo_ms, 2.1.4), contado da chegada: a IABS desiste
+    /// pouco depois dele. Sem o campo (IABS de antes), só o limite de 5 minutos.
+    /// </summary>
+    private static TimeSpan? Prazo(JsonElement raiz) =>
+        raiz.TryGetProperty("prazo_ms", out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var ms) && ms > 0
+            ? TimeSpan.FromMilliseconds(Math.Min(ms, (long)TempoMaximoDaOperacao.TotalMilliseconds))
+            : null;
+
+    /// <summary>
+    /// Atende um pedido, um de cada vez (fila). Com prazo (2.1.4): o pedido que
+    /// venceu esperando na fila não começa (PRAZO_VENCIDO: nada foi feito) e o
+    /// que começou é cortado no prazo (o comando do banco é cancelado e não
+    /// grava), para nada ser gravado depois de a IABS desistir.
+    /// </summary>
+    private async Task AtenderAsync(ClientWebSocket ws, SemaphoreSlim envio, SemaphoreSlim fila, string id, string op, JsonElement parametros, TimeSpan? prazo, CancellationToken ct)
     {
+        var desdeAChegada = Stopwatch.StartNew();
         await fila.WaitAsync(ct);
         object resposta;
         var relogio = Stopwatch.StartNew();
         try
         {
+            var tempo = TempoMaximoDaOperacao;
+            if (prazo is { } p)
+            {
+                var resta = p - desdeAChegada.Elapsed;
+                if (resta <= TimeSpan.Zero) throw new ErroOperacao("PRAZO_VENCIDO");
+                if (resta < tempo) tempo = resta;
+            }
             using var limite = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            limite.CancelAfter(TempoMaximoDaOperacao);
+            limite.CancelAfter(tempo);
             var dados = await despachante.ExecutarAsync(op, parametros, limite.Token);
             resposta = new { tipo = "resposta", id, ok = true, dados };
             logger.LogInformation("Pedido {Op}: ok em {Ms} ms{Linhas}.", op, relogio.ElapsedMilliseconds, Contagem(dados));

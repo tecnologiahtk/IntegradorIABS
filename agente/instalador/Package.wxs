@@ -56,7 +56,6 @@
       </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
-    <StandardDirectory Id="StartupFolder" />
     <StandardDirectory Id="DesktopFolder" />
 
     <Feature Id="Principal" Title="Integrador IABS" Level="1">
@@ -71,17 +70,13 @@
         <Exclude Files="$(var.Publicar)\IabsAgenteSenior.Monitor.exe" />
       </Files>
 
-      <!-- ícone perto do relógio: abre no login de cada usuário (pasta Inicializar de todos os usuários) -->
+      <!-- ícone perto do relógio (2.1.4): abre no login de TODOS os usuários, pela
+           entrada Run da máquina (antes era um atalho na pasta Inicializar de quem
+           instalou), e volta logo depois de instalar ou atualizar (AbrirIcones) -->
       <Component Id="Monitor">
         <File Id="ArquivoMonitor" Source="$(var.Publicar)\IabsAgenteSenior.Monitor.exe" KeyPath="yes" />
-      </Component>
-      <Component Id="AtalhoMonitor" Directory="StartupFolder">
-        <Shortcut Id="AtalhoInicializar"
-                  Name="Integrador IABS (status)"
-                  Description="Mostra perto do relógio se o Integrador IABS está conectado."
-                  Target="[#ArquivoMonitor]"
-                  WorkingDirectory="INSTALLFOLDER" />
-        <RegistryValue Root="HKCU" Key="Software\IABS\AgenteSenior" Name="AtalhoMonitor" Type="integer" Value="1" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run" Name="IntegradorIABS"
+                       Type="string" Value="&quot;[#ArquivoMonitor]&quot;" />
       </Component>
 
       <!-- a janela de configuração e o atalho no menu Iniciar -->
@@ -110,6 +105,14 @@
       <!-- o executável e o serviço do Windows -->
       <Component Id="ServicoAgente">
         <File Id="ArquivoExe" Source="$(var.Publicar)\IabsAgenteSenior.exe" KeyPath="yes" />
+        <!-- 2.1.4: a pasta do programa nasce só para SYSTEM e administradores
+             alterarem; os usuários leem e executam. A TI pode escolher uma pasta
+             fora de Program Files, que herdaria as permissões do disco (em C:\,
+             qualquer usuário altera) e deixaria trocar o executável do serviço.
+             O PrepararInstalacao confere de novo e põe os administradores como dono. -->
+        <CreateFolder>
+          <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)" />
+        </CreateFolder>
         <ServiceInstall Id="InstalarServico"
                         Name="IabsAgenteSenior"
                         DisplayName="Integrador IABS"
@@ -119,7 +122,8 @@
                         ErrorControl="normal"
                         Account="NT SERVICE\IabsAgenteSenior"
                         Vital="yes">
-          <ServiceConfig DelayedAutoStart="yes" OnInstall="yes" OnReinstall="yes" />
+          <!-- 2.1.4: o serviço que para com erro também é religado (não só o que cai) -->
+          <ServiceConfig DelayedAutoStart="yes" FailureActionsWhen="failedToStopOrReturnedError" OnInstall="yes" OnReinstall="yes" />
           <util:ServiceConfig FirstFailureActionType="restart"
                               SecondFailureActionType="restart"
                               ThirdFailureActionType="restart"
@@ -161,6 +165,11 @@
          de conta de usuário; os outros usuários da máquina continuam sem acesso. -->
     <CustomAction Id="PrepararInstalacao" FileRef="ArquivoExe" ExeCommand="preparar-instalacao --usuario [UserSID]"
                   Execute="deferred" Impersonate="no" Return="check" />
+    <!-- Fim da instalação e de toda atualização, inclusive a automática (2.1.4): o
+         ícone, que o instalador fechou para trocar os arquivos, abre de novo na
+         sessão de cada usuário logado (como SYSTEM, com o token do usuário). -->
+    <CustomAction Id="AbrirIcones" FileRef="ArquivoExe" ExeCommand="abrir-icones"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
     <!-- Antes de atualizar ou desinstalar, fecha o ícone e a janela de configuração
          em todas as sessões (manda fechar; se não fechar, encerra), para nenhum
          arquivo ficar preso. -->
@@ -180,6 +189,7 @@
       <Custom Action="RemoverDados" After="StopServices"
               Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND NOT MANTERDADOS" />
       <Custom Action="PrepararInstalacao" After="InstallServices" Condition="NOT (REMOVE=&quot;ALL&quot;)" />
+      <Custom Action="AbrirIcones" After="StartServices" Condition="NOT (REMOVE=&quot;ALL&quot;)" />
       <Custom Action="AbrirConfigurador" After="InstallFinalize"
               Condition="NOT Installed AND UILevel &gt;= 3" />
     </InstallExecuteSequence>

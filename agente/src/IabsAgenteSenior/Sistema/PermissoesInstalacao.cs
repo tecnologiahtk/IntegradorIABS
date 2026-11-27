@@ -73,6 +73,8 @@ public static class PermissoesInstalacao
             chave.SetValue(ValorConfiguradores, sids.Select(s => s.Value).ToArray(), RegistryValueKind.MultiString);
         }
         mensagens.Add(PastaDados.Proteger(pastaDados, sids));
+        // a pasta do programa, que a TI pode ter escolhido fora de Program Files (2.1.4)
+        mensagens.Add(PastaDados.ProtegerPastaDoPrograma(AppContext.BaseDirectory));
         foreach (var sid in sids)
         {
             try

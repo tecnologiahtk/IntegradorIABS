@@ -69,6 +69,7 @@ public static class Cli
                 "atualizador" => await RodarAtualizadorAsync(caminhos),
                 "remover-dados" => RemoverDados(caminhos, opcoes),
                 "preparar-instalacao" => PrepararInstalacao(caminhos, opcoes),
+                "abrir-icones" => AbrirIcones(),
                 _ => Escrever($"Comando desconhecido: {opcoes.Comando}\n\n{Ajuda}", 2),
             };
         }
@@ -115,18 +116,21 @@ public static class Cli
     /// <summary>Como serviço (iniciado pelo integrador): roda uma vez e para. No console: roda uma vez e mostra o resultado.</summary>
     private static async Task<int> RodarAtualizadorAsync(Caminhos caminhos)
     {
+        // o log do atualizador (SYSTEM) fica na área do SYSTEM, não na pasta de dados (AreaDoSistema)
+        var area = AreaDoSistema.Padrao();
         if (WindowsServiceHelpers.IsWindowsService())
         {
             var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { Args = [], ContentRootPath = AppContext.BaseDirectory });
             builder.Services.AddWindowsService(o => o.ServiceName = Constantes.NomeServicoAtualizador);
             builder.Logging.ClearProviders();
-            builder.Logging.AddProvider(new ArquivoLoggerProvider(caminhos.PastaLogs));
+            builder.Logging.AddProvider(new ArquivoLoggerProvider(area.PastaLogs));
             builder.Services.AddSingleton(caminhos);
             builder.Services.AddHostedService<ServicoAtualizador>();
             await builder.Build().RunAsync();
             return 0;
         }
-        var r = await new Atualizador(caminhos, Logger(caminhos)).ExecutarAsync(CancellationToken.None);
+        var logger = LoggerFactory.Create(b => b.AddProvider(new ArquivoLoggerProvider(area.PastaLogs))).CreateLogger("Atualizador");
+        var r = await new Atualizador(caminhos, logger, area: area).ExecutarAsync(CancellationToken.None);
         Console.WriteLine($"Atualização para {r.Versao}: {r.Situacao}{(r.Codigo is null ? "" : $" ({r.Codigo})")}.");
         return r.Situacao is "INSTALANDO" ? 0 : 1;
     }
@@ -194,7 +198,8 @@ public static class Cli
         b.Banco = Perguntar("Nome do banco", atual?.Banco.Banco);
         b.Schema = Perguntar("Schema das tabelas", atual?.Banco.Schema ?? "dbo");
         b.AutenticacaoWindows = SimNao("Autenticação do Windows / gMSA?", atual?.Banco.AutenticacaoWindows == true);
-        b.ConfiarCertificadoServidor = atual?.Banco.ConfiarCertificadoServidor ?? false;
+        b.ConfiarCertificadoServidor = SimNao("Confiar no certificado do SQL Server mesmo sem ser de autoridade reconhecida (cifrado, sem validar)?",
+            atual?.Banco.ConfiarCertificadoServidor == true);
         if (!b.AutenticacaoWindows)
         {
             b.Usuario = Perguntar("Usuário do banco", atual?.Banco.Usuario);
@@ -247,7 +252,7 @@ public static class Cli
             Console.WriteLine($"  Banco: {r.Banco.Nome} — {r.Banco.Produto} {r.Banco.Versao}");
             if (r.CertificadoNaoValidado)
             {
-                Console.WriteLine("  [info] O certificado do SQL Server não é de uma autoridade reconhecida: a conexão é cifrada, sem validar o certificado.");
+                Console.WriteLine("  [info] Confiar no certificado do SQL Server está marcado: a conexão é cifrada, sem validar o certificado.");
             }
             foreach (var t in r.Tabelas) Console.WriteLine(t.Ok ? $"  [ok] {t.Tabela}" : $"  [FALTA] {t.Tabela}: {t.Codigo}");
             Console.WriteLine($"  Permissão na r038afa: incluir {(r.Incluir ? "sim" : "não")}, alterar {(r.Alterar ? "sim" : "não")}, excluir {(r.Excluir ? "sim" : "não")}.");
@@ -270,6 +275,7 @@ public static class Cli
         "BANCO_LOGIN" => "O banco recusou o usuário ou a senha.",
         "BANCO_SEM_ACESSO" => "O usuário entrou no servidor, mas não tem acesso ao banco informado.",
         "BANCO_SEM_RESPOSTA" => "O servidor do banco não respondeu: confira o nome, a porta e o firewall.",
+        "BANCO_CERTIFICADO" => "O certificado do SQL Server não é de uma autoridade reconhecida. Se o servidor é mesmo o do Senior de vocês, marque \"Confiar no certificado do SQL Server\" e teste de novo.",
         "LEITURA_RECUSADA" => "O usuário do banco não pode ler uma das tabelas.",
         _ => $"Erro do banco ({codigo}).",
     };
@@ -291,16 +297,27 @@ public static class Cli
         return 0;
     }
 
+    /// <summary>Fim da instalação e da atualização (2.1.4, chamado pelo MSI como SYSTEM): o ícone volta para quem está logado.</summary>
+    private static int AbrirIcones()
+    {
+        foreach (var m in IconesNasSessoes.Abrir(Path.Combine(AppContext.BaseDirectory, "IabsAgenteSenior.Monitor.exe"))) Console.WriteLine(m);
+        return 0;
+    }
+
     // ---- desinstalação (chamado pelo MSI) -------------------------------------------------------------
     private static int RemoverDados(Caminhos caminhos, Opcoes opcoes)
     {
         if (opcoes.Tem("--manter")) return 0;
+        // a situação do atualizador (2.1.4) sai antes, para a chave do registro poder ficar vazia
+        GuardaNoRegistro.Remover();
         // a lista de quem abre a janela sem administrador (gravada pela instalação) sai junto (2.1.0)
         Console.WriteLine(PermissoesInstalacao.Limpar());
         var pendentes = PastaDados.Remover(caminhos.PastaDados);
         Console.WriteLine(pendentes == 0
             ? $"Pasta de dados removida: {caminhos.PastaDados}"
             : $"{pendentes} arquivo(s) presos serão apagados na próxima reinicialização.");
+        // a área do atualizador (2.1.4): a pasta local do SYSTEM
+        PastaDados.Remover(AreaDoSistema.Padrao().Pasta);
         return 0;
     }
 

@@ -11,6 +11,8 @@ internal sealed class OperacoesFalsas : IOperacoesSenior
     public Pessoa? UltimoDepois { get; private set; }
     public long? UltimoCpf { get; private set; }
     public ErroOperacao? Falhar { get; set; }
+    /// <summary>Quanto o "testar" demora (para encher a fila do canal).</summary>
+    public TimeSpan Demora { get; set; }
 
     private T Registrar<T>(string nome, T valor)
     {
@@ -28,11 +30,12 @@ internal sealed class OperacoesFalsas : IOperacoesSenior
 
     public Task<InfoBanco> InfoAsync(CancellationToken ct) => Task.FromResult(Registrar("info", new InfoBanco("SQL Server", "15.0.2080.9", "SENIOR_TESTE")));
 
-    public Task<ResultadoTeste> TestarAsync(CancellationToken ct)
+    public async Task<ResultadoTeste> TestarAsync(CancellationToken ct)
     {
+        if (Demora > TimeSpan.Zero) await Task.Delay(Demora, ct);
         var r = new ResultadoTeste { Banco = new InfoBanco("SQL Server", "15.0.2080.9", "SENIOR_TESTE"), Incluir = true, Alterar = true, Excluir = true };
         r.Tabelas.Add(new TabelaTestada("r034fun", true, null));
-        return Task.FromResult(Registrar("testar", r));
+        return Registrar("testar", r);
     }
 
     public Task<List<Linha>> SituacoesAsync(IReadOnlyList<int> empresas, IReadOnlyList<int> tipos, CancellationToken ct)

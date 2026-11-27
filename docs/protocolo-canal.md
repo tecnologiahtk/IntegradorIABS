@@ -19,9 +19,9 @@ X-Integrador-Teste: 1          (só no "Testar conexão" da janela: valida e fec
 ```
 
 - `http://` só para `127.0.0.1` e `localhost` (desenvolvimento).
-- Recusa no handshake: **401** chave inválida ou trocada; **403** conexão excluída; **426** protocolo antigo (atualize o integrador).
+- Recusa no handshake: **401** chave inválida ou trocada; **403** conexão excluída; **426** protocolo antigo (atualize o integrador); **429** tentativas demais do mesmo IP; **503** erro do lado da IABS ao conferir a chave (desde a 2.1.4 o integrador tenta de novo logo, sem pedir chave nova).
 - Uma sessão por conexão da IABS: uma nova (sem `X-Integrador-Teste`) derruba a anterior com o código **4002**.
-- Fechamentos da IABS: **4001** chave trocada; **4002** substituída por outra sessão; **4003** conexão excluída.
+- Fechamentos da IABS: **4001** chave trocada; **4002** substituída por outra sessão; **4003** conexão excluída. Valem também para o canal que ainda não mandou o "ola".
 - Sinal de vida: ping do WebSocket a cada 20 s, dos dois lados. Sem pong em 45 s, a conexão cai e o integrador reconecta (espera 1, 2, 5, 10, 20, 30, 60 s; volta ao início depois de 60 s conectado). Depois de 401/403, espera 5 min; depois de 426, 30 min.
 - Compressão `permessage-deflate` ligada (os blocos de colaboradores são grandes).
 
@@ -47,8 +47,10 @@ IABS → integrador, em resposta:
 IABS → integrador (pedido):
 
 ```json
-{ "tipo": "pedido", "id": "9b1c…", "op": "colaboradores", "params": { … } }
+{ "tipo": "pedido", "id": "9b1c…", "op": "colaboradores", "params": { … }, "prazo_ms": 115000 }
 ```
+
+`prazo_ms` (opcional, desde 27/11/2026; integrador 2.1.4): quanto a IABS espera, contado da chegada. A IABS desiste 5 s depois do prazo. O integrador não começa o pedido que venceu esperando na fila (`PRAZO_VENCIDO`: nada foi feito) e corta no prazo o que começou (o comando do banco é cancelado e não grava). Sem o campo, vale o limite de 5 minutos do integrador. Integrador antigo ignora o campo.
 
 Integrador → IABS (resposta, mesmo `id`):
 
@@ -57,7 +59,9 @@ Integrador → IABS (resposta, mesmo `id`):
 { "tipo": "resposta", "id": "9b1c…", "ok": false, "erro": { "codigo": "CLIENTE_COLUNA_OBRIGATORIA", "detalhe": { "coluna": "codmot" } } }
 ```
 
-O integrador atende um pedido por vez (fila). O tempo limite é da IABS (60 s por pedido; 120 s no bloco de colaboradores).
+O integrador atende um pedido por vez (fila). O tempo limite é da IABS (60 s por pedido; 90 s no `testar`; 120 s no bloco de colaboradores), e o prazo que vai no pedido é esse tempo menos 5 s. Mensagem fora do formato (não é objeto, `tipo`, `id` ou `op` que não é texto) é ignorada, sem derrubar o canal.
+
+Na IABS: canal que cai com o pedido já enviado = `INTEGRADOR_CAIU` (não se sabe se gravou; no envio, `TEMPO_ESGOTADO`, e a tentativa seguinte procura a linha pela marca antes de lançar). Pedido que nem saiu (integrador desconectado) = `INTEGRADOR_DESCONECTADO`.
 
 ## Tipos
 
@@ -95,7 +99,9 @@ Atualização do programa (desde a 2.1.0; sempre liberada):
 |---|---|---|
 | `atualizar_integrador` | `{ versao: "2.1.1", sha256: "<64 hex>" }` | `{ situacao: "AGENDADA", versao, atual }`: o integrador deixa o pedido e liga o atualizador (serviço como SYSTEM), que confere de novo a versão, o SHA-256 da IABS contra o do GitHub (`api.github.com/repos/tecnologiahtk/IntegradorIABS/releases/tags/v<versao>`, asset `IntegradorIABS.msi`) e o do arquivo baixado, e roda o `msiexec`. Erros: `PARAMETRO_INVALIDO`, `ATUALIZACAO_DESNECESSARIA` (versão não é mais nova), `ATUALIZACAO_FALHOU` (não ligou o atualizador) |
 
-O "ola" leva a última atualização: `"atualizacao": { "versao", "situacao": "PEDIDA" | "BAIXANDO" | "INSTALANDO" | "ERRO", "codigo", "em" }` (ou `null`). Códigos do atualizador: `VERSAO_NAO_E_MAIS_NOVA`, `VERSAO_NAO_PUBLICADA`, `VERSAO_SEM_INSTALADOR`, `GITHUB_INDISPONIVEL`, `SHA256_DIVERGENTE_GITHUB`, `URL_INESPERADA`, `ENDERECO_NAO_PERMITIDO`, `DOWNLOAD_FALHOU`, `ARQUIVO_GRANDE_DEMAIS`, `SHA256_DIVERGENTE_ARQUIVO`, `INSTALADOR_NAO_INICIOU`.
+O "ola" leva a última atualização: `"atualizacao": { "versao", "situacao": "PEDIDA" | "BAIXANDO" | "INSTALANDO" | "ERRO", "codigo", "em" }` (ou `null`). Códigos do atualizador: `VERSAO_NAO_E_MAIS_NOVA`, `VERSAO_NAO_PUBLICADA`, `VERSAO_SEM_INSTALADOR`, `GITHUB_INDISPONIVEL`, `SHA256_DIVERGENTE_GITHUB`, `URL_INESPERADA`, `ENDERECO_NAO_PERMITIDO`, `DOWNLOAD_FALHOU`, `ARQUIVO_GRANDE_DEMAIS`, `SHA256_DIVERGENTE_ARQUIVO`, `INSTALADOR_NAO_INICIOU`, `PEDIDO_PRESO`, `PASTA_DO_SISTEMA`.
+
+Desde a 2.1.4 o atualizador (SYSTEM) não grava nem apaga nada na pasta de dados: lê o pedido (`atualizar.json`), baixa o instalador e grava os logs na pasta local do SYSTEM (`C:\Windows\System32\config\systemprofile\AppData\Local\IABS\AgenteSenior`, só SYSTEM e administradores abrem), numa subpasta nova a cada atualização, e guarda a situação e o último pedido tratado em `HKLM\SOFTWARE\IABS\AgenteSenior\Atualizacao`. A situação que vai no "ola" é a mais recente entre a do pedido (pasta de dados) e a do atualizador (registro).
 
 ## Erros (`erro.codigo`)
 
@@ -106,7 +112,9 @@ O "ola" leva a última atualização: `"atualizacao": { "versao", "situacao": "P
 | `GRAVACAO_DESLIGADA` | gravação pedida sem a liberação na janela |
 | `BANCO_LOGIN` | o banco recusou usuário ou senha (18456) |
 | `BANCO_SEM_ACESSO` | entrou no servidor, mas não no banco (4060) |
-| `BANCO_SEM_RESPOSTA` | servidor do banco fora do ar, porta fechada ou tempo esgotado |
+| `BANCO_SEM_RESPOSTA` | servidor do banco fora do ar, porta fechada ou tempo esgotado (inclusive o corte no `prazo_ms`) |
+| `BANCO_CERTIFICADO` | o certificado do SQL Server não é de uma autoridade reconhecida e a caixa "Confiar no certificado do SQL Server" não está marcada (2.1.4) |
+| `PRAZO_VENCIDO` | o pedido venceu esperando na fila do integrador e não começou: nada foi feito (2.1.4) |
 | `LEITURA_RECUSADA` | sem permissão de ler a tabela (229/230 num SELECT) |
 | `ESCRITA_RECUSADA` | sem permissão de gravar (229/230 num INSERT/UPDATE/DELETE) |
 | `CLIENTE_CHAVE_REPETIDA` | 2627/2601 |

@@ -50,6 +50,11 @@ public sealed class JanelaPrincipal : Form
     private readonly TextBox _instancia = Campo();
     private readonly TextBox _usuario = Campo();
     private readonly TextBox _senha = Campo(senha: true);
+    // 2.1.4: o integrador não confia mais sozinho num certificado que não é de autoridade reconhecida
+    private readonly CheckBox _confiarCertificado = new()
+    {
+        Text = "Confiar no certificado do SQL Server (só se o teste pedir)", AutoSize = true, Margin = new Padding(3, 6, 3, 2),
+    };
     private readonly CheckBox _gravacao = new()
     {
         Text = "Permitir que a IABS lance os atestados no Senior (tabela r038afa)", AutoSize = true, Margin = new Padding(3, 10, 3, 2),
@@ -265,6 +270,9 @@ public sealed class JanelaPrincipal : Form
         Linha(t, "Instância", _instancia);
         Linha(t, "Usuário", _usuario);
         Linha(t, "Senha", ComSelo(_senha, _seloSenha), dica: "Fica só neste servidor, cifrada pelo Windows. A IABS nunca recebe a senha.");
+        Linha(t, "", _confiarCertificado,
+            dica: "Desmarcado, o certificado do SQL Server é validado. Marque só se o teste disser que o certificado não é de uma autoridade " +
+                  "reconhecida e o servidor for mesmo o do Senior de vocês: a conexão continua cifrada, sem validar o certificado.");
         Linha(t, "", _gravacao,
             dica: "Desmarcado, a IABS só lê. Marcado, ela inclui, corrige e apaga só as linhas com a marca dela (\"IABS #…\" no campo de observação); " +
                   "os lançamentos do RH e do ponto nunca são alterados. O usuário do banco precisa poder incluir, alterar e excluir na r038afa.");
@@ -350,14 +358,15 @@ public sealed class JanelaPrincipal : Form
         _senha.PlaceholderText = string.IsNullOrEmpty(b.SenhaProtegida) ? "" : Definida;
         _seloSenha.Visible = !string.IsNullOrEmpty(b.SenhaProtegida);
         _gravacao.Checked = _atual.GravacaoLiberada;
+        _confiarCertificado.Checked = b.ConfiarCertificadoServidor;
         Status($"Configuração carregada de {_caminhos.ArquivoConfig}.");
     }
 
     private static string? Nulo(string texto) => string.IsNullOrWhiteSpace(texto) ? null : texto.Trim();
 
     /// <summary>
-    /// O que está na tela. Autenticação do Windows, certificado e proxy não estão
-    /// na tela (só pela linha de comando): o valor gravado é preservado.
+    /// O que está na tela. Autenticação do Windows e proxy não estão na tela (só
+    /// pela linha de comando): o valor gravado é preservado.
     /// </summary>
     private EntradaConfiguracao LerCampos()
     {
@@ -374,7 +383,7 @@ public sealed class JanelaPrincipal : Form
                 Schema = Nulo(_schema.Text) ?? "dbo",
                 Instancia = Nulo(_instancia.Text),
                 AutenticacaoWindows = windows,
-                ConfiarCertificadoServidor = _atual?.Banco.ConfiarCertificadoServidor ?? false,
+                ConfiarCertificadoServidor = _confiarCertificado.Checked,
                 Usuario = windows ? null : Nulo(_usuario.Text),
                 TempoLimiteConsultaSegundos = _atual?.Banco.TempoLimiteConsultaSegundos ?? 120,
             },
@@ -459,7 +468,7 @@ public sealed class JanelaPrincipal : Form
             var texto = $"{r.Banco.Nome} — {r.Banco.Produto} {r.Banco.Versao}. "
                 + (r.LeituraOk ? "Todas as tabelas são lidas. " : "Faltam permissões de leitura. ")
                 + (_gravacao.Checked && !r.GravacaoOk ? "O lançamento está liberado, mas o usuário não pode incluir, alterar e excluir na r038afa. " : "")
-                + (r.CertificadoNaoValidado ? "O certificado do SQL Server não é de autoridade reconhecida: a conexão é cifrada, sem validar o certificado." : "");
+                + (r.CertificadoNaoValidado ? "Confiar no certificado está marcado: a conexão é cifrada, sem validar o certificado." : "");
             Mostrar(_resultadoBanco, ok, texto);
             return ok;
         }
@@ -561,7 +570,7 @@ public sealed class JanelaPrincipal : Form
             }
             else if (a.Situacao == "INSTALANDO")
             {
-                Mostrar(_situacaoAtualizacao, false, $"A atualização para {a.Versao} não terminou: veja o log em {Path.Combine(ArquivosAtualizacao.Pasta(_caminhos), $"instalar-{a.Versao}.log")}.");
+                Mostrar(_situacaoAtualizacao, false, $"A atualização para {a.Versao} não terminou: veja o log do instalador em {Path.Combine(AreaDoSistema.PastaDoSystem, "atualizacao")} (só administradores abrem).");
             }
             else if (a.Situacao == "ERRO")
             {
